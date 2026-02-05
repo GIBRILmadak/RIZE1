@@ -3821,12 +3821,16 @@ async function openSettings(userId) {
                     <textarea id="setting-bio" class="form-input" rows="4">${user.bio || ''}</textarea>
                 </div>
 
-                <h3>Type de compte</h3>
-                <div class="account-type-toggle">
-                    <button type="button" class="account-type-btn ${!isEnterprise ? 'active' : ''}" data-type="personal">Personnel</button>
-                    <button type="button" class="account-type-btn ${isEnterprise ? 'active' : ''}" data-type="enterprise">Équipe / Entreprise</button>
-                </div>
-                <input type="hidden" id="setting-account-type" value="${isEnterprise ? 'enterprise' : 'personal'}">
+                <details class="settings-collapsible" open>
+                    <summary>Type de compte</summary>
+                    <div class="settings-collapsible-body">
+                        <div class="account-type-toggle">
+                            <button type="button" class="account-type-btn ${!isEnterprise ? 'active' : ''}" data-type="personal">Personnel</button>
+                            <button type="button" class="account-type-btn ${isEnterprise ? 'active' : ''}" data-type="enterprise">Équipe / Entreprise</button>
+                        </div>
+                        <input type="hidden" id="setting-account-type" value="${isEnterprise ? 'enterprise' : 'personal'}">
+                    </div>
+                </details>
 
                 <h3>Vérification</h3>
                 <div class="verification-section">
@@ -3835,57 +3839,61 @@ async function openSettings(userId) {
                     ${staffRequestHtml}
                 </div>
 
-                <h3>Réseaux Sociaux</h3>
-                <div class="form-group">
-                    <div class="social-link-item">
-                        <img src="icons/email.svg" alt="Email">
-                        <input type="email" class="form-input" data-social="email" placeholder="email@exemple.com" value="${socialLinks.email || ''}">
+                <details class="settings-collapsible" open>
+                    <summary>Réseaux Sociaux</summary>
+                    <div class="settings-collapsible-body">
+                        <div class="form-group">
+                            <div class="social-link-item">
+                                <img src="icons/email.svg" alt="Email">
+                                <input type="email" class="form-input" data-social="email" placeholder="email@exemple.com" value="${socialLinks.email || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/twitter.svg" alt="X">
+                                <input type="text" class="form-input" data-social="twitter" placeholder="x (twitter).com/username" value="${socialLinks.twitter || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/youtube.svg" alt="YouTube">
+                                <input type="text" class="form-input" data-social="youtube" placeholder="https://youtube.com" value="${socialLinks.youtube || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/twitch.svg" alt="Twitch">
+                                <input type="text" class="form-input" data-social="twitch" placeholder="twitch.com/username" value="${socialLinks.twitch || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/spotify.svg" alt="Spotify">
+                                <input type="text" class="form-input" data-social="spotify" placeholder="spotify.com/username" value="${socialLinks.spotify || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/tiktok.svg" alt="TikTok">
+                                <input type="text" class="form-input" data-social="tiktok" placeholder="tiktok.com/username" value="${socialLinks.tiktok || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/discord.svg" alt="Discord">
+                                <input type="text" class="form-input" data-social="discord" placeholder="discord.com/username" value="${socialLinks.discord || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/reddit.svg" alt="Reddit">
+                                <input type="text" class="form-input" data-social="reddit" placeholder="reddit.com/username" value="${socialLinks.reddit || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/pinterest.svg" alt="Pinterest">
+                                <input type="text" class="form-input" data-social="pinterest" placeholder="pinterest.com/username" value="${socialLinks.pinterest || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/linkedin.svg" alt="LinkedIn">
+                                <input type="text" class="form-input" data-social="linkedin" placeholder="linkedin.com/username" value="${socialLinks.linkedin || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/facebook.svg" alt="Facebook">
+                                <input type="text" class="form-input" data-social="facebook" placeholder="facebook.com/username" value="${socialLinks.facebook || ''}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/link.svg" alt="Site">
+                                <input type="text" class="form-input" data-social="site" placeholder="https://example.com" value="${socialLinks.site || ''}">
+                            </div>
+                        </div>
                     </div>
-                    <div class="social-link-item">
-                        <img src="icons/twitter.svg" alt="X">
-                        <input type="text" class="form-input" data-social="twitter" placeholder="x (twitter).com/username" value="${socialLinks.twitter || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/youtube.svg" alt="YouTube">
-                        <input type="text" class="form-input" data-social="youtube" placeholder="https://youtube.com" value="${socialLinks.youtube || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/twitch.svg" alt="Twitch">
-                        <input type="text" class="form-input" data-social="twitch" placeholder="twitch.com/username" value="${socialLinks.twitch || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/spotify.svg" alt="Spotify">
-                        <input type="text" class="form-input" data-social="spotify" placeholder="spotify.com/username" value="${socialLinks.spotify || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/tiktok.svg" alt="TikTok">
-                        <input type="text" class="form-input" data-social="tiktok" placeholder="tiktok.com/username" value="${socialLinks.tiktok || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/discord.svg" alt="Discord">
-                        <input type="text" class="form-input" data-social="discord" placeholder="discord.com/username" value="${socialLinks.discord || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/reddit.svg" alt="Reddit">
-                        <input type="text" class="form-input" data-social="reddit" placeholder="reddit.com/username" value="${socialLinks.reddit || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/pinterest.svg" alt="Pinterest">
-                        <input type="text" class="form-input" data-social="pinterest" placeholder="pinterest.com/username" value="${socialLinks.pinterest || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/linkedin.svg" alt="LinkedIn">
-                        <input type="text" class="form-input" data-social="linkedin" placeholder="linkedin.com/username" value="${socialLinks.linkedin || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/facebook.svg" alt="Facebook">
-                        <input type="text" class="form-input" data-social="facebook" placeholder="facebook.com/username" value="${socialLinks.facebook || ''}">
-                    </div>
-                    <div class="social-link-item">
-                        <img src="icons/link.svg" alt="Site">
-                        <input type="text" class="form-input" data-social="site" placeholder="https://example.com" value="${socialLinks.site || ''}">
-                    </div>
-                </div>
+                </details>
 
                 <div class="actions-bar" style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2rem;">
                     <button type="button" class="btn-cancel" onclick="closeSettings()">Annuler</button>

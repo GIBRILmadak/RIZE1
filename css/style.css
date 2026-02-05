@@ -553,23 +553,46 @@ nav {
     position: relative;
     overflow: hidden;
     border: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.post-content-wrap > img {
+.post-content-wrap > img,
+.post-content-wrap > video,
+.post-content-wrap .immersive-video {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
 }
 
-.immersive-video-wrap,
-.immersive-video {
+.immersive-video-wrap {
     width: 100%;
     height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .immersive-video {
     object-fit: contain;
     background: #000;
+}
+
+.immersive-placeholder {
+    width: min(92vw, 56vh);
+    max-width: 560px;
+    aspect-ratio: 9 / 16;
+    height: auto;
+    background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #333;
+    font-size: 0.9rem;
 }
 
 .post-info {
@@ -897,6 +920,8 @@ nav {
     .timeline-card {
         padding: 0.9rem;
         border-radius: 10px;
+        max-width: 92%;
+        margin-right: auto;
     }
 
     .timeline-card h4 {
@@ -919,6 +944,12 @@ nav {
     .arc-view .timeline-media video,
     .arc-view .timeline-media img {
         max-height: 140px;
+    }
+
+    .timeline-item-latest {
+        max-width: 92%;
+        margin-right: auto;
+        padding: 1.1rem;
     }
 }
 
@@ -949,6 +980,8 @@ nav {
 
     .timeline-card {
         padding: 0.75rem;
+        max-width: 90%;
+        margin-right: auto;
     }
 
     .timeline-card h4 {
@@ -976,6 +1009,12 @@ nav {
     .arc-view .timeline-media video,
     .arc-view .timeline-media img {
         max-height: 120px;
+    }
+
+    .timeline-item-latest {
+        max-width: 90%;
+        margin-right: auto;
+        padding: 0.95rem;
     }
 }
 
@@ -1763,6 +1802,85 @@ input[type="text"]:focus, input[type="url"]:focus, textarea:focus, .form-input:f
 .project-meta h4 { margin: 0 0 0.25rem 0; font-size: 0.95rem; }
 .project-meta p { margin: 0; color: var(--text-secondary); font-size: 0.85rem; }
 
+.project-doc {
+    margin-top: 0.6rem;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 0.35rem 0.5rem;
+    background: rgba(0,0,0,0.25);
+}
+
+.project-doc summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #fff;
+    font-weight: 700;
+    list-style: none;
+}
+
+.project-doc summary::-webkit-details-marker {
+    display: none;
+}
+
+.project-doc-body {
+    margin-top: 0.6rem;
+    display: grid;
+    gap: 0.5rem;
+}
+
+.project-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.project-tag {
+    font-size: 0.72rem;
+    color: rgba(255,255,255,0.9);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+}
+
+.project-tag strong {
+    font-weight: 700;
+    margin-right: 0.2rem;
+}
+
+.project-links {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.project-link {
+    font-size: 0.75rem;
+    color: #fff;
+    text-decoration: none;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    padding: 0.25rem 0.5rem;
+    background: rgba(255,255,255,0.04);
+}
+
+.project-link:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+.project-doc-section h5 {
+    margin: 0;
+    font-size: 0.78rem;
+    color: #fff;
+}
+
+.project-doc-section p {
+    margin: 0.15rem 0 0;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
 .project-contents {
     margin-top: 0.75rem;
     padding-top: 0.75rem;
@@ -2028,6 +2146,64 @@ input[type="text"]:focus, input[type="url"]:focus, textarea:focus, .form-input:f
     font-size: 0.85rem;
     margin-bottom: 2rem;
     font-weight: 400;
+}
+
+.settings-collapsible {
+    border: 1px solid #1a1a1a;
+    border-radius: 16px;
+    background: #0c0c0c;
+    overflow: hidden;
+    margin-bottom: 1.25rem;
+}
+
+.settings-collapsible > summary {
+    cursor: pointer;
+    padding: 1.1rem 1.25rem;
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    font-weight: 700;
+    color: #f5f5f5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    list-style: none;
+    outline: none;
+}
+
+.settings-collapsible > summary::-webkit-details-marker {
+    display: none;
+}
+
+.settings-collapsible > summary::after {
+    content: '▾';
+    font-size: 0.9rem;
+    color: #777;
+    transition: transform 0.2s ease;
+}
+
+.settings-collapsible[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.settings-collapsible-body {
+    padding: 0 1.25rem 1.25rem;
+}
+
+.settings-section.settings-collapsible {
+    padding: 0;
+}
+
+.settings-section.settings-collapsible > summary {
+    padding: 2.25rem 2.5rem 1.25rem;
+    font-size: 1.25rem;
+}
+
+.settings-section.settings-collapsible > summary::after {
+    font-size: 1rem;
+}
+
+.settings-section.settings-collapsible .settings-collapsible-body {
+    padding: 0 2.5rem 2.5rem;
 }
 
 .form-group {

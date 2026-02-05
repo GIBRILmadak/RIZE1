@@ -386,10 +386,16 @@ function handleEmailBadgeClick(email, el) {
     const span = badge.querySelector('.email-reveal');
     if (!span) return;
 
-    if (span.textContent !== email) {
-        span.textContent = email;
+    const isVisible = badge.dataset.emailVisible === '1';
+    if (isVisible) {
+        span.style.display = 'none';
+        badge.dataset.emailVisible = '0';
+        return;
     }
+
+    if (span.textContent !== email) span.textContent = email;
     span.style.display = 'inline';
+    badge.dataset.emailVisible = '1';
 
     const doToast = (msg) => {
         if (window.ToastManager && typeof window.ToastManager.success === 'function') {
@@ -422,7 +428,7 @@ function handleEmailBadgeClick(email, el) {
    INTERFACE RÉGLAGES - RENDU
    ======================================== */
 
-// Générer l'interface de réglages
+// Générer l'interface de réglages 
 function renderSettingsModal(userId) {
     const user = getUser(userId);
     if (!user) return '';
@@ -551,16 +557,18 @@ function renderSettingsModal(userId) {
             </div>
 
             <!-- SECTION LIENS -->
-            <div class="settings-section">
-                <h3>Réseaux & Liens</h3>
-                <p>Connectez vos autres espaces pour offrir plus de contexte à votre progression.</p>
-                
-                ${socialLinksHtml}
+            <details class="settings-section settings-collapsible" open>
+                <summary>Réseaux & Liens</summary>
+                <div class="settings-collapsible-body">
+                    <p>Connectez vos autres espaces pour offrir plus de contexte à votre progression.</p>
+                    
+                    ${socialLinksHtml}
 
-                <div class="consent-label">
-                    Les modifications sont instantanées dès la validation.
+                    <div class="consent-label">
+                        Les modifications sont instantanées dès la validation.
+                    </div>
                 </div>
-            </div>
+            </details>
 
             <!-- SECTION THÈME -->
             <div class="settings-section">
@@ -706,9 +714,24 @@ function renderImmersiveContent(userId) {
         const contentBadges = getContentBadges(content);
         const badgesHtml = renderBadges(contentBadges);
         
-        const mediaHtml = content.mediaUrl 
-            ? `<img src="${content.mediaUrl}" style="width: 100%; height: 100%; object-fit: cover;">`
-            : `<div style="height: 100%; background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%); display: flex; align-items: center; justify-content: center; color: #333; font-size: 0.9rem;">Jour ${content.dayNumber}</div>`;
+        let mediaHtml = '';
+        if (content.mediaUrl) {
+            if (content.type === 'video') {
+                mediaHtml = `
+                    <div class="immersive-video-wrap">
+                        <video class="immersive-video" src="${content.mediaUrl}" muted autoplay loop playsinline preload="metadata"></video>
+                    </div>
+                `;
+            } else {
+                mediaHtml = `<img class="immersive-media" src="${content.mediaUrl}" alt="${content.title || 'Media'}">`;
+            }
+        } else {
+            mediaHtml = `
+                <div class="immersive-placeholder">
+                    Jour ${content.dayNumber}
+                </div>
+            `;
+        }
 
         return `
             <div class="immersive-post">
@@ -727,6 +750,47 @@ function renderImmersiveContent(userId) {
             </div>
         `;
     }).join('');
+}
+
+// Construire la documentation d'un projet (optionnelle)
+function renderProjectDoc(project) {
+    const doc = project.doc || {};
+    const values = Object.values(doc).filter(v => v && String(v).trim().length > 0);
+    if (values.length === 0) return '';
+
+    const tag = (label, value) => value ? `<span class="project-tag"><strong>${label}:</strong> ${value}</span>` : '';
+    const section = (label, value) => value ? `
+        <div class="project-doc-section">
+            <h5>${label}</h5>
+            <p>${value}</p>
+        </div>
+    ` : '';
+
+    const links = [
+        doc.demoUrl ? `<a class="project-link" href="${doc.demoUrl}" target="_blank" rel="noopener">Démo</a>` : '',
+        doc.repoUrl ? `<a class="project-link" href="${doc.repoUrl}" target="_blank" rel="noopener">Repo</a>` : ''
+    ].filter(Boolean).join('');
+
+    return `
+        <details class="project-doc">
+            <summary>Documentation</summary>
+            <div class="project-doc-body">
+                <div class="project-tags">
+                    ${tag('Rôle', doc.role)}
+                    ${tag('Durée', doc.duration)}
+                    ${tag('Stack', doc.stack)}
+                    ${tag('Statut', doc.status)}
+                </div>
+                ${links ? `<div class="project-links">${links}</div>` : ''}
+                ${section('Problème / Opportunité', doc.problem)}
+                ${section('Solution', doc.solution)}
+                ${section('Choix techniques', doc.decisions)}
+                ${section('Résultats / Preuves', doc.results)}
+                ${section('Apprentissages', doc.learnings)}
+                ${section('Prochaine étape', doc.nextSteps)}
+            </div>
+        </details>
+    `;
 }
 
 // Construire la timeline du profil
@@ -887,6 +951,7 @@ function renderProfileTimeline(userId, viewerId = 'user-1') {
                     <div class="project-meta">
                         <h4>${p.name}</h4>
                         <p>${p.desc || ''}</p>
+                        ${renderProjectDoc(p)}
                     </div>
                 </div>
             `).join('')}
@@ -997,6 +1062,27 @@ function showCreateProjectForm(userId) {
             <h3>Nouveau projet</h3>
             <label>Nom<input id="proj-name" /></label>
             <label>Description<textarea id="proj-desc"></textarea></label>
+            <label>Rôle<input id="proj-role" placeholder="Ex: Lead dev, Designer..." /></label>
+            <label>Durée<input id="proj-duration" placeholder="Ex: 3 mois" /></label>
+            <label>Stack<input id="proj-stack" placeholder="Ex: Unity, C#, Blender" /></label>
+            <label>Statut
+                <select id="proj-status">
+                    <option value="">Non défini</option>
+                    <option value="Idée">Idée</option>
+                    <option value="Prototype">Prototype</option>
+                    <option value="Beta">Beta</option>
+                    <option value="Live">Live</option>
+                    <option value="En pause">En pause</option>
+                </select>
+            </label>
+            <label>Lien démo<input id="proj-demo" placeholder="https://..." /></label>
+            <label>Lien repo<input id="proj-repo" placeholder="https://..." /></label>
+            <label>Problème / Opportunité<textarea id="proj-problem"></textarea></label>
+            <label>Solution<textarea id="proj-solution"></textarea></label>
+            <label>Choix techniques<textarea id="proj-decisions"></textarea></label>
+            <label>Résultats / Preuves<textarea id="proj-results"></textarea></label>
+            <label>Apprentissages<textarea id="proj-learnings"></textarea></label>
+            <label>Prochaine étape<textarea id="proj-next"></textarea></label>
             <label>Cover URL<input id="proj-cover" placeholder="https://..." /></label>
             <div style="margin-top:8px"><button id="proj-create">Créer</button> <button id="proj-cancel">Annuler</button></div>
         </div>
@@ -1005,7 +1091,8 @@ function showCreateProjectForm(userId) {
     // upgraded: support file upload + url fallback
     // replace cover field with file + url inputs
     const panel = form.querySelector('.modal-panel');
-    panel.querySelector('label:nth-of-type(3)').innerHTML = 'Cover (fichier)<input id="proj-cover-file" type="file" accept="image/*" />';
+    const coverLabel = panel.querySelector('label input#proj-cover')?.closest('label');
+    if (coverLabel) coverLabel.innerHTML = 'Cover (fichier)<input id="proj-cover-file" type="file" accept="image/*" />';
     const urlLabel = document.createElement('label');
     urlLabel.innerHTML = 'Ou URL de cover<input id="proj-cover-url" class="form-input" placeholder="https://... (optionnel)" />';
     panel.insertBefore(urlLabel, panel.querySelector('div'));
@@ -1025,11 +1112,43 @@ function showCreateProjectForm(userId) {
     form.querySelector('#proj-create').addEventListener('click', () => {
         const name = form.querySelector('#proj-name').value.trim();
         const desc = form.querySelector('#proj-desc').value.trim();
+        const role = form.querySelector('#proj-role').value.trim();
+        const duration = form.querySelector('#proj-duration').value.trim();
+        const stack = form.querySelector('#proj-stack').value.trim();
+        const status = form.querySelector('#proj-status').value;
+        const demoUrl = form.querySelector('#proj-demo').value.trim();
+        const repoUrl = form.querySelector('#proj-repo').value.trim();
+        const problem = form.querySelector('#proj-problem').value.trim();
+        const solution = form.querySelector('#proj-solution').value.trim();
+        const decisions = form.querySelector('#proj-decisions').value.trim();
+        const results = form.querySelector('#proj-results').value.trim();
+        const learnings = form.querySelector('#proj-learnings').value.trim();
+        const nextSteps = form.querySelector('#proj-next').value.trim();
         const cover = form._coverData || (coverUrlInput.value && coverUrlInput.value.trim()) || null;
         if (!name) return alert('Donnez un nom au projet');
         const user = getUser(userId);
         user.projects = user.projects || [];
-        const project = { id: 'p_' + Date.now(), name, desc, cover: cover, contents: [] };
+        const project = { 
+            id: 'p_' + Date.now(), 
+            name, 
+            desc, 
+            cover: cover, 
+            contents: [],
+            doc: {
+                role,
+                duration,
+                stack,
+                status,
+                demoUrl,
+                repoUrl,
+                problem,
+                solution,
+                decisions,
+                results,
+                learnings,
+                nextSteps
+            }
+        };
         user.projects.unshift(project);
         form.remove();
         if (currentUserId === userId) document.querySelector('.profile-container').innerHTML = renderProfileTimeline(userId, currentViewerId);

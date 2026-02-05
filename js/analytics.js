@@ -102,10 +102,59 @@ async function getMonthlyMetrics(userId, year, monthIndex) {
     }
 }
 
-function buildSeries(metrics, daysInMonth) {
+async function getMonthlyLiveHours(userId, year, monthIndex) {
+    try {
+        const monthStart = new Date(year, monthIndex, 1, 0, 0, 0, 0);
+        const monthEnd = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
+        const endIso = monthEnd.toISOString();
+        const startIso = monthStart.toISOString();
+
+        const { data, error } = await supabase
+            .from('streaming_sessions')
+            .select('started_at, ended_at')
+            .eq('user_id', userId)
+            .lte('started_at', endIso)
+            .or(`ended_at.gte.${startIso},ended_at.is.null`);
+
+        if (error) throw error;
+
+        const durations = Array(monthEnd.getDate()).fill(0);
+        (data || []).forEach((session) => {
+            if (!session.started_at) return;
+            const start = new Date(session.started_at);
+            const end = session.ended_at ? new Date(session.ended_at) : new Date();
+            if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+
+            const clampedStart = start < monthStart ? monthStart : start;
+            const clampedEnd = end > monthEnd ? monthEnd : end;
+            if (clampedEnd <= clampedStart) return;
+
+            let cursor = new Date(clampedStart);
+            while (cursor < clampedEnd) {
+                const dayIndex = cursor.getDate() - 1;
+                if (dayIndex < 0 || dayIndex >= durations.length) break;
+                const dayEnd = new Date(cursor);
+                dayEnd.setHours(23, 59, 59, 999);
+                const segmentEnd = clampedEnd < dayEnd ? clampedEnd : dayEnd;
+                const durationMs = segmentEnd - cursor;
+                if (durationMs > 0) durations[dayIndex] += durationMs;
+                cursor = new Date(dayEnd.getTime() + 1);
+            }
+        });
+
+        const liveHours = durations.map(ms => ms > 0 ? Math.ceil(ms / 3600000) : 0);
+        return { success: true, liveHours };
+    } catch (error) {
+        console.error('Erreur récupération heures live:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+function buildSeries(metrics, daysInMonth, liveHours = []) {
     const success = Array(daysInMonth).fill(0);
     const failure = Array(daysInMonth).fill(0);
     const pause = Array(daysInMonth).fill(0);
+    const live = Array(daysInMonth).fill(0);
 
     metrics.forEach((m) => {
         if (!m.date) return;
@@ -119,7 +168,13 @@ function buildSeries(metrics, daysInMonth) {
         pause[idx] += m.pause_count || 0;
     });
 
-    return { success, failure, pause };
+    if (Array.isArray(liveHours) && liveHours.length) {
+        for (let i = 0; i < daysInMonth; i++) {
+            live[i] = Number(liveHours[i]) || 0;
+        }
+    }
+
+    return { success, failure, pause, live };
 }
 
 function renderDashboardShell(months, selectedKey, containerId = 'analytics-dashboard') {
@@ -135,7 +190,7 @@ function renderDashboardShell(months, selectedKey, containerId = 'analytics-dash
     dashboard.innerHTML = `
         <div class="analytics-header" style="text-align: center; margin-bottom: 2rem;">
             <h1 style="font-size: 2.2rem; font-weight: 800; margin-bottom: 0.4rem;">Analytics Mensuelles</h1>
-            <p style="color: var(--text-secondary);">Succès, échecs et pauses par jour</p>
+            <p style="color: var(--text-secondary);">Succès, échecs, pauses et lives (heures) par jour</p>
         </div>
         <div class="analytics-controls" style="display: flex; justify-content: center; gap: 1rem; align-items: center; margin-bottom: 2rem; flex-wrap: wrap;">
             <label for="${selectId}" style="color: var(--text-secondary); font-weight: 600;">Mois</label>
@@ -160,10 +215,11 @@ function renderMonthlyChart({ year, monthIndex, daysInMonth, series, containerId
         ...series.success,
         ...series.failure,
         ...series.pause,
+        ...series.live,
         0
     );
     const isProfileDashboard = containerId === 'profile-analytics';
-    const yMax = isProfileDashboard ? 10 : Math.max(daysInMonth, maxValue);
+    const yMax = isProfileDashboard ? Math.max(10, maxValue) : Math.max(daysInMonth, maxValue);
 
     if (window.analyticsCharts[safeId]) {
         window.analyticsCharts[safeId].destroy();
@@ -193,6 +249,13 @@ function renderMonthlyChart({ year, monthIndex, daysInMonth, series, containerId
                     data: series.pause,
                     borderColor: '#6366f1',
                     backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                    tension: 0.3
+                },
+                {
+                    label: 'Live (heures)',
+                    data: series.live,
+                    borderColor: '#a855f7',
+                    backgroundColor: 'rgba(168, 85, 247, 0.12)',
                     tension: 0.3
                 }
             ]
@@ -250,6 +313,7 @@ async function renderMonth(userId, year, monthIndex, containerId = 'analytics-da
 
     const { daysInMonth } = getMonthRange(year, monthIndex);
     const metricsResult = await getMonthlyMetrics(userId, year, monthIndex);
+    const liveResult = await getMonthlyLiveHours(userId, year, monthIndex);
 
     if (!metricsResult.success) {
         if (message) {
@@ -258,13 +322,15 @@ async function renderMonth(userId, year, monthIndex, containerId = 'analytics-da
         return;
     }
 
-    const series = buildSeries(metricsResult.metrics, daysInMonth);
+    const liveHours = liveResult.success ? liveResult.liveHours : Array(daysInMonth).fill(0);
+    const series = buildSeries(metricsResult.metrics, daysInMonth, liveHours);
 
     renderMonthlyChart({ year, monthIndex, daysInMonth, series, containerId });
 
     const total = series.success.reduce((a, b) => a + b, 0)
         + series.failure.reduce((a, b) => a + b, 0)
-        + series.pause.reduce((a, b) => a + b, 0);
+        + series.pause.reduce((a, b) => a + b, 0)
+        + series.live.reduce((a, b) => a + b, 0);
 
     if (message) {
         message.textContent = total === 0 ? 'Aucune donnée pour ce mois.' : '';

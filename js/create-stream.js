@@ -14,6 +14,10 @@ class StreamCreator {
         this.isRecording = false;
         this.layout = 'camera-only';
         this.availableCameras = [];
+        this.isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        this.canUseMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        this.canShareScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+        this.facingMode = 'user';
         
         this.init();
     }
@@ -21,6 +25,7 @@ class StreamCreator {
     async init() {
         await this.checkAuth();
         await this.setupControls();
+        this.applyDeviceCapabilities();
         await this.discoverCameras();
         this.updateUI();
     }
@@ -69,9 +74,110 @@ class StreamCreator {
         // Plein écran
         document.getElementById('fullscreen-preview')?.addEventListener('click', () => this.togglePreviewFullscreen());
     }
+
+    applyDeviceCapabilities() {
+        const screenBtn = document.getElementById('screen-btn');
+        const screenLayouts = ['screen-only', 'picture-in-picture', 'side-by-side'];
+        const screenUnavailable = !this.canShareScreen || this.isMobile;
+
+        if (screenBtn && screenUnavailable) {
+            screenBtn.disabled = true;
+            screenBtn.classList.add('disabled');
+            const status = screenBtn.querySelector('.btn-status');
+            if (status) status.textContent = 'Indisponible';
+            screenBtn.title = this.isMobile ? 'Partage d\'écran non supporté sur mobile' : 'Partage d\'écran indisponible';
+        }
+
+        screenLayouts.forEach(layout => {
+            const btn = document.querySelector(`[data-layout="${layout}"]`);
+            if (btn && screenUnavailable) {
+                btn.disabled = true;
+                btn.classList.remove('active');
+            }
+        });
+
+        if (screenUnavailable && this.layout !== 'camera-only') {
+            this.layout = 'camera-only';
+        }
+    }
+
+    buildCameraConstraints({ deviceId, facingMode } = {}) {
+        const video = {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
+        };
+
+        if (deviceId) {
+            video.deviceId = { exact: deviceId };
+        } else if (facingMode) {
+            video.facingMode = { ideal: facingMode };
+        }
+
+        return { video, audio: true };
+    }
+
+    async requestUserMedia(constraints) {
+        try {
+            return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (error) {
+            if (constraints.audio) {
+                try {
+                    const fallback = { ...constraints, audio: false };
+                    const stream = await navigator.mediaDevices.getUserMedia(fallback);
+                    if (window.ToastManager) {
+                        ToastManager.info('Micro désactivé', 'Live lancé sans audio');
+                    }
+                    return stream;
+                } catch (fallbackError) {
+                    throw error;
+                }
+            }
+            throw error;
+        }
+    }
+
+    async requestDisplayMedia(constraints) {
+        if (!this.canShareScreen) {
+            throw new Error('getDisplayMedia indisponible');
+        }
+        try {
+            return await navigator.mediaDevices.getDisplayMedia(constraints);
+        } catch (error) {
+            if (constraints.audio) {
+                try {
+                    const fallback = { ...constraints, audio: false };
+                    const stream = await navigator.mediaDevices.getDisplayMedia(fallback);
+                    if (window.ToastManager) {
+                        ToastManager.info('Micro désactivé', 'Partage d\'écran sans audio');
+                    }
+                    return stream;
+                } catch (fallbackError) {
+                    throw error;
+                }
+            }
+            throw error;
+        }
+    }
+
+    ensurePreviewPlayback() {
+        if (!this.preview) return;
+        this.preview.muted = true;
+        this.preview.playsInline = true;
+        const playPromise = this.preview.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {});
+        }
+    }
     
     async discoverCameras() {
         try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+                if (window.ToastManager) {
+                    ToastManager.error('Caméras', 'Votre navigateur ne supporte pas la détection caméra');
+                }
+                return;
+            }
             const devices = await navigator.mediaDevices.enumerateDevices();
             this.availableCameras = devices.filter(device => device.kind === 'videoinput');
             
@@ -103,6 +209,11 @@ class StreamCreator {
     
     async toggleCamera() {
         const btn = document.getElementById('camera-btn');
+
+        if (!this.canUseMedia) {
+            ToastManager.error('Caméra', 'Accès caméra non supporté sur ce navigateur');
+            return;
+        }
         
         if (this.cameraStream) {
             // Arrêter la caméra
@@ -115,16 +226,11 @@ class StreamCreator {
             // Démarrer la caméra
             try {
                 await LoadingManager.withLoading(btn, async () => {
-                    const constraints = {
-                        video: {
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 },
-                            frameRate: { ideal: 30 }
-                        },
-                        audio: true
-                    };
-                    
-                    this.cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+                    const constraints = this.buildCameraConstraints({
+                        facingMode: this.isMobile ? this.facingMode : undefined
+                    });
+
+                    this.cameraStream = await this.requestUserMedia(constraints);
                     btn.classList.add('active');
                     btn.querySelector('.btn-status').textContent = 'Active';
                     document.getElementById('camera-options').style.display = 'block';
@@ -143,6 +249,11 @@ class StreamCreator {
     
     async toggleScreen() {
         const btn = document.getElementById('screen-btn');
+
+        if (!this.canShareScreen || this.isMobile) {
+            ToastManager.info('Partage d\'écran', 'Indisponible sur mobile. Utilisez la caméra.');
+            return;
+        }
         
         if (this.screenStream) {
             // Arrêter le partage d'écran
@@ -154,7 +265,7 @@ class StreamCreator {
             // Démarrer le partage d'écran
             try {
                 await LoadingManager.withLoading(btn, async () => {
-                    this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+                    this.screenStream = await this.requestDisplayMedia({
                         video: {
                             width: { ideal: 1920 },
                             height: { ideal: 1080 },
@@ -188,28 +299,24 @@ class StreamCreator {
     }
     
     async switchCamera(deviceId) {
-        if (!deviceId || !this.cameraStream) return;
+        if ((!deviceId && !this.isMobile) || !this.cameraStream) return;
         
         try {
             // Arrêter l'ancienne caméra
             this.cameraStream.getTracks().forEach(track => track.stop());
             
             // Démarrer la nouvelle caméra
-            const constraints = {
-                video: {
-                    deviceId: { exact: deviceId },
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    frameRate: { ideal: 30 }
-                },
-                audio: true
-            };
-            
-            this.cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+            const constraints = this.buildCameraConstraints({
+                deviceId: deviceId || undefined,
+                facingMode: !deviceId && this.isMobile ? this.facingMode : undefined
+            });
+
+            this.cameraStream = await this.requestUserMedia(constraints);
             this.updatePreview();
             
             const selectedCamera = this.availableCameras.find(c => c.deviceId === deviceId);
-            ToastManager.success('Caméra changée', selectedCamera?.label || 'Nouvelle caméra');
+            const label = selectedCamera?.label || (this.facingMode === 'environment' ? '📷 Caméra arrière' : '🤳 Caméra selfie');
+            ToastManager.success('Caméra changée', label);
         } catch (error) {
             console.error('Erreur changement caméra:', error);
             ToastManager.error('Erreur', 'Impossible de changer de caméra');
@@ -218,6 +325,16 @@ class StreamCreator {
     
     switchToNextCamera() {
         const select = document.getElementById('camera-select');
+        if (!select) return;
+
+        if (this.availableCameras.length <= 1) {
+            if (this.isMobile) {
+                this.facingMode = this.facingMode === 'user' ? 'environment' : 'user';
+                this.switchCamera(null);
+            }
+            return;
+        }
+
         const currentIndex = Array.from(select.options).findIndex(option => option.selected);
         const nextIndex = (currentIndex + 1) % select.options.length;
         
@@ -293,6 +410,10 @@ class StreamCreator {
         } else {
             this.preview.srcObject = null;
         }
+
+        if (this.preview.srcObject) {
+            this.ensurePreviewPlayback();
+        }
         
         // Empêcher la relecture automatique après pause
         this.preview.addEventListener('pause', () => {
@@ -338,6 +459,7 @@ class StreamCreator {
         const compositeStream = this.canvas.captureStream(30);
         this.preview.srcObject = compositeStream;
         this.currentStream = compositeStream;
+        this.ensurePreviewPlayback();
     }
     
     drawPictureInPicture(screenVideo, cameraVideo) {
@@ -563,8 +685,8 @@ document.addEventListener('DOMContentLoaded', () => {
     titleInput.addEventListener('input', () => streamCreator.updateUI());
     
     // Message d'aide pour mobile
-    if (/Mobi|Android/i.test(navigator.userAgent)) {
-        ToastManager.info('Mode mobile détecté', 'Utilisez les boutons de changement de caméra pour basculer entre selfie et arrière');
+    if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+        ToastManager.info('Mode mobile détecté', 'Lancez le live via la caméra (partage d\'écran souvent indisponible).');
     }
 });
 

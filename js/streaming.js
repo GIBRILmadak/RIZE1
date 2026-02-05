@@ -743,18 +743,77 @@ async function setupBroadcasterMedia(options = {}) {
     try {
         const source = options.source || 'camera';
         let stream = null;
+        const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+        const requestUserMedia = async (constraints) => {
+            try {
+                return await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (error) {
+                if (constraints.audio) {
+                    try {
+                        const fallback = { ...constraints, audio: false };
+                        const streamNoAudio = await navigator.mediaDevices.getUserMedia(fallback);
+                        if (window.ToastManager) {
+                            ToastManager.info('Micro désactivé', 'Live lancé sans audio');
+                        }
+                        return streamNoAudio;
+                    } catch (fallbackError) {
+                        throw error;
+                    }
+                }
+                throw error;
+            }
+        };
+
+        const requestDisplayMedia = async (constraints) => {
+            try {
+                return await navigator.mediaDevices.getDisplayMedia(constraints);
+            } catch (error) {
+                if (constraints.audio) {
+                    try {
+                        const fallback = { ...constraints, audio: false };
+                        const streamNoAudio = await navigator.mediaDevices.getDisplayMedia(fallback);
+                        if (window.ToastManager) {
+                            ToastManager.info('Micro désactivé', 'Partage d\'écran sans audio');
+                        }
+                        return streamNoAudio;
+                    } catch (fallbackError) {
+                        throw error;
+                    }
+                }
+                throw error;
+            }
+        };
 
         if (source === 'screen' && navigator.mediaDevices.getDisplayMedia) {
-            stream = await navigator.mediaDevices.getDisplayMedia({
-                video: {
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    frameRate: { ideal: 30 }
-                },
-                audio: true
-            });
+            try {
+                stream = await requestDisplayMedia({
+                    video: {
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        frameRate: { ideal: 30 }
+                    },
+                    audio: true
+                });
+            } catch (error) {
+                if (isMobile) {
+                    if (window.ToastManager) {
+                        ToastManager.info('Partage d\'écran indisponible', 'Bascule sur la caméra');
+                    }
+                    stream = await requestUserMedia({
+                        video: {
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 },
+                            frameRate: { ideal: 30 }
+                        },
+                        audio: true
+                    });
+                } else {
+                    throw error;
+                }
+            }
         } else {
-            stream = await navigator.mediaDevices.getUserMedia({
+            stream = await requestUserMedia({
                 video: {
                     width: { ideal: 1280 },
                     height: { ideal: 720 },
