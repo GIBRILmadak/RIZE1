@@ -9,7 +9,7 @@ const ALLOWED_IMAGE_TYPES = [
     "image/webp",
 ];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_FILE_SIZE = Number.POSITIVE_INFINITY; // no client-side limit
 
 // Uploader un fichier vers Supabase Storage
 function isGifFile(file) {
@@ -36,7 +36,7 @@ async function uploadFile(file, folder = "content") {
 
         // Validation de la taille
         if (file.size > MAX_FILE_SIZE) {
-            throw new Error("Fichier trop volumineux. Maximum 50MB.");
+            throw new Error("Fichier trop volumineux.");
         }
 
         // Vérifier que l'utilisateur est connecté
@@ -352,9 +352,7 @@ function validateFile(file) {
 
     // Vérifier la taille
     if (file.size > MAX_FILE_SIZE) {
-        errors.push(
-            `Fichier trop volumineux (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`,
-        );
+        errors.push("Fichier trop volumineux");
     }
 
     return {

@@ -4646,7 +4646,7 @@ async function openCreateMenu(userId, preSelectedArcId = null, existingContent =
                                     <line x1="12" y1="3" x2="12" y2="15"></line>
                                 </svg>
                                 <p style="color: var(--text-secondary); font-size: 0.9rem;">Cliquez ou glissez un fichier ici</p>
-                                <p style="color: var(--text-secondary); font-size: 0.75rem; opacity: 0.7;">JPG, PNG, GIF, MP4 (Max 50MB)</p>
+                                <p style="color: var(--text-secondary); font-size: 0.75rem; opacity: 0.7;">JPG, PNG, GIF, MP4</p>
                             </div>
                         </div>
                         <input type="file" id="create-media-file" accept="image/*,video/*" style="display: none;">

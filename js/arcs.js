@@ -164,7 +164,7 @@ function renderArcCreationForm(arcToEdit = null) {
                                 <line x1="12" y1="3" x2="12" y2="15"></line>
                             </svg>
                             <p style="color: var(--text-secondary); font-size: 0.9rem;">Cliquez ou glissez une couverture</p>
-                            <p style="color: var(--text-secondary); font-size: 0.75rem; opacity: 0.7;">JPG, PNG, GIF, MP4 (Max 50MB)</p>
+                            <p style="color: var(--text-secondary); font-size: 0.75rem; opacity: 0.7;">JPG, PNG, GIF, MP4</p>
                         </div>
                     </div>
                     <input type="file" id="arc-cover-file" accept="image/*,video/*" style="display: none;">
@@ -818,4 +818,3 @@ window.deleteArc = deleteArc;
 
 // Auto-init when DOM loaded
 document.addEventListener('DOMContentLoaded', initArcs);
-
