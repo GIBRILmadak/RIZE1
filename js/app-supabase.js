@@ -5219,7 +5219,7 @@ async function openSettings(userId) {
                 </button>
             </div>
             
-            <form id="settings-form">
+            <form id="settings-form" novalidate>
                 <h3>Identité</h3>
                 
             <div class="upload-section" style="display: flex; flex-direction: column; gap: 2rem; margin-bottom: 2rem;">

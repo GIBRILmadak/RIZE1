@@ -482,7 +482,7 @@ function renderSettingsModal(userId) {
             <p>Ajustez les détails de votre trajectoire publique.</p>
         </div>
 
-        <form id="settingsForm-${userId}" onsubmit="return handleSettingsSave('${userId}')">
+        <form id="settingsForm-${userId}" onsubmit="return handleSettingsSave('${userId}')" novalidate>
             <!-- SECTION IDENTITÉ -->
             <div class="settings-section">
                 <h3>Identité Visuelle</h3>
