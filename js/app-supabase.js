@@ -18,6 +18,25 @@ function isMobileDevice() {
     return window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
 }
 
+function getInitialProfileUserId() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('user') || params.get('u');
+    } catch (error) {
+        return null;
+    }
+}
+
+function isProfileOnlyPage() {
+    return !!document.getElementById('profile') && !document.getElementById('discover');
+}
+
+function buildProfileUrl(userId) {
+    const base = 'profile.html';
+    if (!userId) return base;
+    return `${base}?user=${encodeURIComponent(userId)}`;
+}
+
 /* ========================================
    INITIALISATION ET AUTHENTIFICATION
    ======================================== */
@@ -26,6 +45,8 @@ function isMobileDevice() {
 async function initializeApp() {
     const grid = document.querySelector('.discover-grid');
     const waitMessage = document.querySelector('.wait');
+    const initialProfileId = getInitialProfileUserId();
+    const profileOnlyPage = isProfileOnlyPage();
 
     // Timeout de sécurité : si rien ne se passe après 1 minute
     const safetyTimeout = setTimeout(() => {
@@ -64,6 +85,11 @@ async function initializeApp() {
         
         // Vérifier la session avec Supabase
         const user = await checkAuth();
+        if (!user && profileOnlyPage && !initialProfileId) {
+            clearTimeout(safetyTimeout);
+            window.location.href = 'login.html';
+            return;
+        }
         
         if (user) {
             window.currentUser = user;
@@ -73,7 +99,9 @@ async function initializeApp() {
                 SessionManager.saveSession(user);
             }
             updateNavigation(true);
-            navigateTo('discover');
+            if (!profileOnlyPage) {
+                navigateTo('discover');
+            }
             await loadAllData();
         } else if (savedSession) {
             if (typeof ToastManager !== 'undefined') {
@@ -89,7 +117,7 @@ async function initializeApp() {
             await loadPublicData();
         }
 
-        if (skipLanding) {
+        if (skipLanding && !profileOnlyPage) {
             navigateTo('discover');
         }
         
@@ -98,7 +126,10 @@ async function initializeApp() {
         
         await renderDiscoverGrid();
         
-        if (window.currentUserId) {
+        if (initialProfileId) {
+            window.currentProfileViewed = initialProfileId;
+            await renderProfileIntoContainer(initialProfileId);
+        } else if (window.currentUserId) {
             await renderProfileIntoContainer(window.currentUserId);
         }
 
@@ -3348,11 +3379,22 @@ async function renderProfileIntoContainer(userId) {
     window.currentProfileViewed = userId;
     const profileContainer = document.querySelector('.profile-container');
     if (!profileContainer) return;
+    profileContainer.innerHTML = getProfileLoadingMarkup();
+    profileContainer.classList.remove('arc-view');
     profileContainer.innerHTML = await renderProfileTimeline(userId);
     profileContainer.classList.toggle('arc-view', !!window.selectedArcId);
     if (window.loadUserArcs) window.loadUserArcs(userId);
     if (window.renderProfileAnalytics) window.renderProfileAnalytics(userId);
     maybeShowAmbassadorWelcome(userId);
+}
+
+function getProfileLoadingMarkup() {
+    return `
+        <div class="profile-loading" role="status" aria-live="polite">
+            <span class="loading-spinner" aria-hidden="true"></span>
+            <span>Chargement du profil...</span>
+        </div>
+    `;
 }
 
 /* ========================================
@@ -3364,6 +3406,23 @@ function navigateTo(pageId) {
     if (pageId === 'profile' && !currentUser && !window.currentProfileViewed) {
         window.location.href = 'login.html';
         return;
+    }
+
+    if (pageId === 'profile') {
+        const profilePage = document.getElementById('profile');
+        if (!profilePage) {
+            const targetUserId = window.currentProfileViewed || window.currentUserId || null;
+            window.location.href = buildProfileUrl(targetUserId);
+            return;
+        }
+    }
+
+    if (pageId === 'discover') {
+        const discoverPage = document.getElementById('discover');
+        if (!discoverPage) {
+            window.location.href = 'index.html';
+            return;
+        }
     }
     
     const pages = document.querySelectorAll('.page');
@@ -3384,6 +3443,14 @@ async function handleProfileNavigation() {
         return;
     }
     
+    const targetUserId = window.currentUserId || window.currentUser?.id;
+    window.currentProfileViewed = targetUserId || null;
+
+    if (!document.getElementById('profile')) {
+        window.location.href = buildProfileUrl(targetUserId);
+        return;
+    }
+
     // Si connecté, naviguer vers le profil
     navigateTo('profile');
     
@@ -3405,14 +3472,15 @@ async function selectArc(arcId, userId) {
 window.selectArc = selectArc;
 
 async function navigateToUserProfile(userId) {
-    const profileContainer = document.querySelector('.profile-container');
     window.currentProfileViewed = userId;
+    if (!document.getElementById('profile')) {
+        window.location.href = buildProfileUrl(userId);
+        return;
+    }
+
+    const profileContainer = document.querySelector('.profile-container');
     if (profileContainer) {
-        profileContainer.innerHTML = `
-            <div style="padding: 2rem; color: var(--text-secondary);">
-                Chargement du profil...
-            </div>
-        `;
+        profileContainer.innerHTML = getProfileLoadingMarkup();
         profileContainer.classList.remove('arc-view');
     }
     navigateTo('profile');

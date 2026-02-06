@@ -24,7 +24,7 @@
         <!-- Supabase JS -->
         <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     </head>
-    <body>
+    <body class="profile-open">
         <!-- Container pour les notifications Toast -->
         <div id="toast-container"></div>
 
@@ -108,102 +108,15 @@
             </div>
         </nav>
 
-        <!-- DISCOVER -->
-        <section id="discover" class="page active">
-            <div class="container">
-                <div class="discover-header">
-                    <h2>En mouvement</h2>
-
-                    <!-- Filtre EUX / MOI -->
-                    <div
-                        class="discover-filter"
-                        style="
-                            display: flex;
-                            gap: 1rem;
-                            margin-top: 1rem;
-                            margin-bottom: 1rem;
-                        "
-                    >
-                        <button
-                            class="filter-btn active"
-                            data-filter="all"
-                            onclick="toggleDiscoverFilter('all')"
-                            style="
-                                background: none;
-                                border: none;
-                                color: var(--text-primary);
-                                opacity: 1;
-                                font-weight: 600;
-                                cursor: pointer;
-                                padding-bottom: 0.25rem;
-                                border-bottom: 2px solid var(--accent-color);
-                            "
-                        >
-                            ALL
-                        </button>
-                        <button
-                            class="filter-btn"
-                            data-filter="following"
-                            onclick="toggleDiscoverFilter('following')"
-                            style="
-                                background: none;
-                                border: none;
-                                color: var(--text-secondary);
-                                opacity: 0.7;
-                                font-weight: 500;
-                                cursor: pointer;
-                                padding-bottom: 0.25rem;
-                                border-bottom: 2px solid transparent;
-                            "
-                        >
-                            MOI
-                        </button>
-                    </div>
-
-                    <p style="color: var(--text-secondary)">
-                        Cliquez pour plonger dans une trajectoire.
-                    </p>
-
-                    <!-- Annonces officielles -->
-                    <div
-                        id="announcements-container"
-                        class="announcements"
-                    ></div>
-
-                    <!-- Barre de recherche -->
-                    <div class="search-container" style="margin-top: 2rem">
-                        <div class="search-input-wrapper">
-                            <svg
-                                class="search-icon"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                            >
-                                <circle cx="11" cy="11" r="8"></circle>
-                                <path d="m21 21-4.35-4.35"></path>
-                            </svg>
-                            <input
-                                type="text"
-                                id="search-input"
-                                class="search-input"
-                                placeholder=""
-                            />
-                        </div>
-                        <div id="search-results" class="search-results">
-                            <!-- Résultats injectés dynamiquement -->
-                        </div>
-                    </div>
-                </div>
-
-                <div class="discover-grid">
-                    <!-- Contenu injecté dynamiquement -->
-                </div>
-            </div>
-        </section>
-
         <!-- BOUTON RÉGLAGES (FIXED POSITION) -->
         <div id="settings-button-container"></div>
+
+        <!-- PROFIL (TIMELINE) -->
+        <section id="profile" class="page active">
+            <div class="container profile-container">
+                <!-- Contenu injecté dynamiquement -->
+            </div>
+        </section>
 
         <!-- Configuration Supabase -->
         <script src="js/supabase-config.js"></script>
