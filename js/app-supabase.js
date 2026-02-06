@@ -568,6 +568,7 @@ async function initializeApp() {
             await renderProfileIntoContainer(window.currentUserId);
         }
 
+        handleLoginPromptContext();
         clearTimeout(safetyTimeout);
     } catch (error) {
         console.error("Initialization error:", error);
@@ -600,6 +601,165 @@ function updateNavigation(isLoggedIn) {
         } else {
             navProfile.style.display = "block";
         }
+    }
+
+    handleLoginPromptContext();
+}
+
+/* ========================================
+   POPUP CONNEXION (DISCOVER / IMMERSIVE)
+   ======================================== */
+
+const LOGIN_PROMPT_VIEW_THRESHOLD = 5;
+let loginPromptTimerId = null;
+let loginPromptShown = false;
+let loginPromptImmersiveViews = 0;
+
+function isDiscoverOrImmersiveActive() {
+    const discoverActive =
+        document.getElementById("discover")?.classList.contains("active") ||
+        false;
+    const immersiveOpen =
+        document.getElementById("immersive-overlay")?.style.display === "block";
+    return discoverActive || immersiveOpen;
+}
+
+function ensureLoginPromptElements() {
+    if (document.getElementById("login-prompt-overlay")) return;
+
+    const style = document.createElement("style");
+    style.id = "login-prompt-style";
+    style.textContent = `
+        .login-prompt-overlay {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.65);
+            z-index: 2000;
+            padding: 24px;
+        }
+        .login-prompt-overlay.active {
+            display: flex;
+        }
+        .login-prompt-card {
+            width: min(420px, 92vw);
+            background: #0f1115;
+            color: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .login-prompt-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin: 0 0 8px 0;
+        }
+        .login-prompt-text {
+            margin: 0 0 16px 0;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.95rem;
+        }
+        .login-prompt-cta {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 10px;
+            background: #ffffff;
+            color: #0f1115;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .login-prompt-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+        }
+    `;
+    document.head.appendChild(style);
+
+    const overlay = document.createElement("div");
+    overlay.id = "login-prompt-overlay";
+    overlay.className = "login-prompt-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.innerHTML = `
+        <div class="login-prompt-card">
+            <h3 class="login-prompt-title">Continue sur RIZE</h3>
+            <p class="login-prompt-text">
+                Crée ton compte pour sauvegarder tes découvertes et continuer.
+            </p>
+            <button class="login-prompt-cta" data-login-action="true">
+                Se connecter / Créer un compte
+            </button>
+        </div>
+    `;
+    overlay.addEventListener("click", () => {
+        window.location.href = "login.html";
+    });
+    overlay
+        .querySelector("[data-login-action]")
+        ?.addEventListener("click", (event) => {
+            event.stopPropagation();
+            window.location.href = "login.html";
+        });
+    overlay
+        .querySelector(".login-prompt-card")
+        ?.addEventListener("click", (event) => event.stopPropagation());
+    document.body.appendChild(overlay);
+}
+
+function showLoginPrompt() {
+    if (loginPromptShown || window.currentUser) return;
+    ensureLoginPromptElements();
+    const overlay = document.getElementById("login-prompt-overlay");
+    if (!overlay) return;
+    overlay.classList.add("active");
+    overlay.setAttribute("aria-hidden", "false");
+    loginPromptShown = true;
+    stopLoginPromptTimer();
+}
+
+function startLoginPromptTimer() {
+    if (loginPromptTimerId || loginPromptShown || window.currentUser) return;
+    loginPromptTimerId = setTimeout(() => {
+        loginPromptTimerId = null;
+        if (!window.currentUser && isDiscoverOrImmersiveActive()) {
+            showLoginPrompt();
+        }
+    }, LOGIN_PROMPT_DELAY_MS);
+}
+
+function stopLoginPromptTimer() {
+    if (!loginPromptTimerId) return;
+    clearTimeout(loginPromptTimerId);
+    loginPromptTimerId = null;
+}
+
+function handleLoginPromptContext() {
+    if (window.currentUser) {
+        stopLoginPromptTimer();
+        return;
+    }
+    stopLoginPromptTimer();
+}
+
+function recordImmersiveViewForLoginPrompt() {
+    if (loginPromptShown || window.currentUser) return;
+    loginPromptImmersiveViews += 1;
+    if (
+        loginPromptImmersiveViews >= LOGIN_PROMPT_VIEW_THRESHOLD &&
+        isDiscoverOrImmersiveActive()
+    ) {
+        showLoginPrompt();
     }
 }
 
@@ -2148,6 +2308,8 @@ function renderProfileSocialLinks(userId) {
     const platformLabels = {
         email: "Email",
         github: "GitHub",
+        instagram: "Instagram",
+        snapchat: "Snapchat",
         youtube: "YouTube",
         twitter: "X",
         tiktok: "TikTok",
@@ -2164,6 +2326,8 @@ function renderProfileSocialLinks(userId) {
     const platformIcons = {
         email: "icons/email.svg",
         github: "icons/github.svg",
+        instagram: "icons/instagram.svg",
+        snapchat: "icons/snapchat.svg",
         youtube: "icons/youtube.svg",
         twitter: "icons/twitter.svg",
         tiktok: "icons/tiktok.svg",
@@ -3325,6 +3489,7 @@ async function openImmersive(startUserId, startContentId = null) {
     `;
     overlay.style.display = "block";
     document.body.style.overflow = "hidden";
+    handleLoginPromptContext();
 
     try {
         // Get ALL content sorted by date, then personalize
@@ -3511,6 +3676,8 @@ async function openImmersive(startUserId, startContentId = null) {
 function closeImmersive() {
     document.getElementById("immersive-overlay").style.display = "none";
     document.body.style.overflow = "auto";
+    loginPromptImmersiveViews = 0;
+    handleLoginPromptContext();
 }
 
 let currentImmersiveUser = null;
@@ -3549,6 +3716,7 @@ function setupImmersiveObserver() {
                         incrementViews(contentId);
                         const content = findContentById(contentId);
                         updateImmersivePrefs(content, "view");
+                        recordImmersiveViewForLoginPrompt();
 
                         const viewCountSpan =
                             entry.target.querySelector(".stat-pill span");
@@ -4617,6 +4785,7 @@ function navigateTo(pageId) {
     }
     window.scrollTo(0, 0);
     document.body.classList.toggle("profile-open", pageId === "profile");
+    handleLoginPromptContext();
 }
 
 // Make sure handleProfileNavigation is defined as an async function
@@ -5122,6 +5291,18 @@ async function openSettings(userId) {
                             <div class="social-link-item">
                                 <img src="icons/email.svg" alt="Email">
                                 <input type="email" class="form-input" data-social="email" placeholder="email@exemple.com" value="${socialLinks.email || ""}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/github.svg" alt="GitHub">
+                                <input type="text" class="form-input" data-social="github" placeholder="github.com/username" value="${socialLinks.github || ""}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/instagram.svg" alt="Instagram">
+                                <input type="text" class="form-input" data-social="instagram" placeholder="instagram.com/username" value="${socialLinks.instagram || ""}">
+                            </div>
+                            <div class="social-link-item">
+                                <img src="icons/snapchat.svg" alt="Snapchat">
+                                <input type="text" class="form-input" data-social="snapchat" placeholder="snapchat.com/username" value="${socialLinks.snapchat || ""}">
                             </div>
                             <div class="social-link-item">
                                 <img src="icons/twitter.svg" alt="X">

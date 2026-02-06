@@ -336,6 +336,8 @@ function renderProfileSocialLinks(userId) {
     const platformLabels = {
         email: 'Email',
         github: 'GitHub',
+        instagram: 'Instagram',
+        snapchat: 'Snapchat',
         youtube: 'YouTube',
         twitter: 'X',
         tiktok: 'TikTok',
@@ -440,6 +442,8 @@ function renderSettingsModal(userId) {
     const socialData = [
         { platform: 'email', label: 'Email', icon: './icons/email.svg' },
         { platform: 'github', label: 'GitHub', icon: './icons/github.svg' },
+        { platform: 'instagram', label: 'Instagram', icon: './icons/instagram.svg' },
+        { platform: 'snapchat', label: 'Snapchat', icon: './icons/snapchat.svg' },
         { platform: 'twitter', label: 'X (Twitter)', icon: './icons/twitter.svg' },
         { platform: 'youtube', label: 'YouTube', icon: './icons/youtube.svg' },
         { platform: 'twitch', label: 'Twitch', icon: './icons/twitch.svg' },
