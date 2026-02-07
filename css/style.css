@@ -328,6 +328,27 @@ nav {
     flex: 1;
 }
 
+/* Text-only posts */
+.user-card.text-card {
+    gap: 0.75rem;
+}
+.card-text {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+}
+.card-text-body {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    line-height: 1.35;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 5;
+    -webkit-box-orient: vertical;
+}
+
 /* Video-specific adaptations */
 .user-card.has-media.video .card-media {
     height: 200px; /* Videos get more height */
@@ -388,7 +409,7 @@ nav {
 
 @media (max-width: 700px) {
     /* reduced height for mobile discover cards */
-    .card-media { height: 48vh; border-radius: 14px; }
+    .card-media { height: 40vh; border-radius: 14px; }
     .user-card { padding: 0.75rem; border-radius: 12px; }
     .discover-grid { gap: 0.8rem; grid-template-columns: 1fr; }
 
@@ -403,7 +424,7 @@ nav {
     .user-card.has-media .card-media-wrap { border-radius: 10px; }
     .user-card.has-media .card-media {
         height: auto;
-        aspect-ratio: 9 / 16;
+        aspect-ratio: 4 / 5;
         object-fit: cover;
     }
     .user-card.has-media.video .card-media {
@@ -580,6 +601,43 @@ nav {
 .immersive-video {
     object-fit: contain;
     background: #000;
+}
+
+.immersive-image-wrap {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+}
+
+.immersive-image {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    display: block;
+}
+
+.immersive-text-card {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #111 0%, #050505 100%);
+    padding: 1.8rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    color: var(--text-primary);
+    text-align: left;
+    overflow-y: auto;
+}
+.immersive-text-card p {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
 }
 
 .immersive-placeholder {
@@ -1754,6 +1812,48 @@ nav {
 
 .btn-add:hover { transform: translateY(-4px) scale(1.02); }
 
+#floating-create-container {
+    position: fixed;
+    right: 1.2rem;
+    bottom: 1.2rem;
+    z-index: 2600;
+    display: flex;
+    justify-content: flex-end;
+}
+
+#floating-create-container .btn-add {
+    width: 72px;
+    height: 72px;
+    border-radius: 20px;
+    padding: 0.65rem;
+    box-shadow: 0 18px 38px rgba(2, 6, 23, 0.6),
+        inset 0 -6px 14px rgba(0, 0, 0, 0.08);
+    background: linear-gradient(135deg, var(--accent-color) 0%, #fff 75%);
+    color: #000;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+#floating-create-container .btn-add img {
+    width: 26px;
+    height: 26px;
+}
+
+@media (max-width: 700px) {
+    #floating-create-container {
+        right: 1rem;
+        bottom: 1rem;
+    }
+    #floating-create-container .btn-add {
+        width: 64px;
+        height: 64px;
+        border-radius: 18px;
+    }
+}
+
 /* Inputs / textarea premium */
 input[type="text"], input[type="url"], input[type="file"], textarea, .form-input {
     width: 100%;
@@ -2627,6 +2727,30 @@ html.light-mode .btn-theme-toggle:hover {
     animation: fadeInSettings 0.6s cubic-bezier(0.16, 1, 0.3, 1);
     max-height: calc(100vh - 4rem);
     overflow-y: auto;
+    position: relative;
+}
+
+.create-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: rgba(255,255,255,0.05);
+    color: var(--text-primary);
+    font-size: 1rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.create-close:hover {
+    transform: scale(1.05);
+    background: rgba(255,255,255,0.1);
 }
 
 /* === TAGS DE CONTEXTE POUR TIMELINE === */

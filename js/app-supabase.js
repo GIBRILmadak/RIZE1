@@ -611,9 +611,11 @@ function updateNavigation(isLoggedIn) {
    ======================================== */
 
 const LOGIN_PROMPT_VIEW_THRESHOLD = 5;
+const LOGIN_PROMPT_REPEAT_INCREMENT = 10;
 let loginPromptTimerId = null;
 let loginPromptShown = false;
 let loginPromptImmersiveViews = 0;
+let loginPromptNextThreshold = LOGIN_PROMPT_VIEW_THRESHOLD;
 
 function isDiscoverOrImmersiveActive() {
     const discoverActive =
@@ -652,6 +654,7 @@ function ensureLoginPromptElements() {
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
             text-align: center;
             border: 1px solid rgba(255, 255, 255, 0.08);
+            position: relative;
         }
         .login-prompt-title {
             font-size: 1.25rem;
@@ -682,6 +685,26 @@ function ensureLoginPromptElements() {
             transform: translateY(-1px);
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
         }
+        .login-prompt-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.04);
+            color: #fff;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.12s ease, background 0.12s ease;
+        }
+        .login-prompt-close:hover {
+            transform: scale(1.05);
+            background: rgba(255,255,255,0.08);
+        }
     `;
     document.head.appendChild(style);
 
@@ -693,9 +716,10 @@ function ensureLoginPromptElements() {
     overlay.setAttribute("aria-hidden", "true");
     overlay.innerHTML = `
         <div class="login-prompt-card">
-            <h3 class="login-prompt-title">Continue sur RIZE</h3>
+            <button class="login-prompt-close" aria-label="Fermer">✕</button>
+            <h3 class="login-prompt-title">Vous aimez RIZE ?</h3>
             <p class="login-prompt-text">
-                Crée ton compte pour sauvegarder tes découvertes et continuer.
+                Connectez-vous et profitez sans interruption.
             </p>
             <button class="login-prompt-cta" data-login-action="true">
                 Se connecter / Créer un compte
@@ -714,6 +738,12 @@ function ensureLoginPromptElements() {
     overlay
         .querySelector(".login-prompt-card")
         ?.addEventListener("click", (event) => event.stopPropagation());
+    overlay
+        .querySelector(".login-prompt-close")
+        ?.addEventListener("click", (event) => {
+            event.stopPropagation();
+            dismissLoginPrompt();
+        });
     document.body.appendChild(overlay);
 }
 
@@ -726,6 +756,18 @@ function showLoginPrompt() {
     overlay.setAttribute("aria-hidden", "false");
     loginPromptShown = true;
     stopLoginPromptTimer();
+}
+
+function dismissLoginPrompt() {
+    const overlay = document.getElementById("login-prompt-overlay");
+    if (overlay) {
+        overlay.classList.remove("active");
+        overlay.setAttribute("aria-hidden", "true");
+    }
+    loginPromptShown = false;
+    // reprogrammer après 10 vues supplémentaires
+    loginPromptNextThreshold =
+        loginPromptImmersiveViews + LOGIN_PROMPT_REPEAT_INCREMENT;
 }
 
 function startLoginPromptTimer() {
@@ -756,7 +798,7 @@ function recordImmersiveViewForLoginPrompt() {
     if (loginPromptShown || window.currentUser) return;
     loginPromptImmersiveViews += 1;
     if (
-        loginPromptImmersiveViews >= LOGIN_PROMPT_VIEW_THRESHOLD &&
+        loginPromptImmersiveViews >= loginPromptNextThreshold &&
         isDiscoverOrImmersiveActive()
     ) {
         showLoginPrompt();
@@ -934,6 +976,45 @@ function getUser(userId) {
     return allUsers.find((u) => u.id === userId);
 }
 
+// --- Gestion hashtags ---
+function normalizeTag(tag) {
+    return tag.replace(/^#/, "").trim().toLowerCase();
+}
+
+function parseTagsInput(inputValue) {
+    if (!inputValue) return [];
+    return Array.from(
+        new Set(
+            inputValue
+                .split(/[,\s]+/)
+                .map(normalizeTag)
+                .filter(Boolean),
+        ),
+    ).slice(0, 12); // hard cap to avoid spam
+}
+
+function extractTagsFromDescription(rawDescription = "") {
+    const pattern = /#hashtags:\s*([\w\-\#,\s]+)/i;
+    const match = rawDescription.match(pattern);
+    const tags = match
+        ? match[1]
+              .split(/[,\s]+/)
+              .map(normalizeTag)
+              .filter(Boolean)
+        : [];
+    const cleanDescription = match
+        ? rawDescription.replace(match[0], "").trim()
+        : rawDescription;
+    return { tags, cleanDescription };
+}
+
+function encodeDescriptionWithTags(description, tags = []) {
+    const unique = Array.from(new Set((tags || []).map(normalizeTag).filter(Boolean)));
+    if (unique.length === 0) return description;
+    const base = (description || "").trim();
+    return `${base}${base ? "\n\n" : ""}#hashtags: ${unique.join(",")}`;
+}
+
 // Récupérer le contenu d'un utilisateur
 function getUserContentLocal(userId) {
     const contents = userContents[userId] || [];
@@ -1011,6 +1092,8 @@ function convertSupabaseContent(supabaseContent) {
     const arcOwner = supabaseContent.arcs?.user_id
         ? getUser(supabaseContent.arcs.user_id)
         : null;
+    const rawDescription = supabaseContent.description || "";
+    const { tags, cleanDescription } = extractTagsFromDescription(rawDescription);
     return {
         contentId: supabaseContent.id,
         userId: supabaseContent.user_id,
@@ -1020,7 +1103,9 @@ function convertSupabaseContent(supabaseContent) {
         type: supabaseContent.type,
         state: supabaseContent.state,
         title: supabaseContent.title,
-        description: supabaseContent.description,
+        description: cleanDescription,
+        rawDescription,
+        tags,
         mediaUrl: supabaseContent.media_url,
         views: supabaseContent.views || 0,
         encouragementsCount: supabaseContent.encouragements_count || 0,
@@ -2497,14 +2582,28 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
         }
     }
 
-    // Fallback for text-only content - display stats elsewhere?
-    // For now, let's assume media is primary. If no media, we can add stats to the card status line.
+    const isTextContent =
+        latestContent &&
+        (!latestContent.mediaUrl || latestContent.type === "text");
+
+    let textHtml = "";
+    if (isTextContent) {
+        const textBody =
+            latestContent.description ||
+            latestContent.title ||
+            "Nouveau post texte";
+        textHtml = `
+            <div class="card-text">
+                <p class="card-text-body">${textBody}</p>
+            </div>
+        `;
+    }
 
     // Déterminer la classe CSS selon le type de média pour l'adaptation
     const cardClass =
         latestContent && latestContent.mediaUrl
             ? `user-card has-media ${latestContent.type}`
-            : "user-card";
+            : `user-card ${isTextContent ? "text-card" : ""}`;
 
     // Ajout information ARC
     let arcInfo = "";
@@ -2643,6 +2742,8 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
                     <span class="status-day">J-${latestContent ? latestContent.dayNumber : 0}</span>
                     ${latestContent ? latestContent.title : "Aucune activité"}
                 </div>
+                
+                ${textHtml}
                 
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     ${badgesHtml}
@@ -3380,7 +3481,7 @@ async function renderImmersiveFeed(contents) {
                 if (content.type === "video") {
                     mediaHtml = `
                     <div class="immersive-video-wrap" style="position: relative; width: 100%; height: 100%;">
-                        <video id="immersive-video-${content.contentId}" class="immersive-video" src="${content.mediaUrl}" playsinline webkit-playsinline autoplay muted preload="auto" style="width: 100%; height: 100%; object-fit: cover;" data-content-id="${content.contentId}" disablePictureInPicture></video>
+                        <video id="immersive-video-${content.contentId}" class="immersive-video" src="${content.mediaUrl}" playsinline webkit-playsinline autoplay muted preload="auto" style="width: 100%; height: 100%; object-fit: contain;" data-content-id="${content.contentId}" disablePictureInPicture></video>
                         <div class="video-fallback">
                             <img src="icons/play.svg" alt="Play" width="56" height="56">
                             <span>Vidéo</span>
@@ -3389,10 +3490,14 @@ async function renderImmersiveFeed(contents) {
                     </div>
                 `;
                 } else {
-                    mediaHtml = `<img src="${content.mediaUrl}" style="width: 100%; height: 100%; object-fit: cover;">`;
+                    mediaHtml = `<div class="immersive-image-wrap"><img src="${content.mediaUrl}" class="immersive-image" alt="${content.title || "Media"}"></div>`;
                 }
             } else {
-                mediaHtml = `<div style="height: 100%; background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%); display: flex; align-items: center; justify-content: center; color: #333; font-size: 0.9rem;">Jour ${content.dayNumber}</div>`;
+                const textBody =
+                    content.description ||
+                    content.title ||
+                    "Nouveau post texte";
+                mediaHtml = `<div class="immersive-text-card"><p>${textBody}</p></div>`;
             }
 
             const isEncouraged = encouragedContentIds.has(content.contentId);
@@ -6124,9 +6229,6 @@ async function openCreateMenu(
     }
     const nextDay = existingContent ? existingContent.day_number : maxDay + 1;
 
-    // Get user projects for selection
-    const projects = userProjects[userId] || [];
-
     // Generate ARC Options (Mandatory)
     let arcOptions = "";
     // Si on édite une trace existante qui n'a pas d'arc (legacy), on laisse l'option vide ou on force ?
@@ -6156,8 +6258,17 @@ async function openCreateMenu(
         ? `Modifier la trace du jour ${nextDay}`
         : `Documentez votre progression du jour ${nextDay}`;
 
+    const existingRawDesc =
+        (existingContent && (existingContent.rawDescription || existingContent.description)) ||
+        "";
+    const { tags: existingTags, cleanDescription: existingCleanDesc } =
+        extractTagsFromDescription(existingRawDesc);
+    const tagsPrefill =
+        existingTags.length > 0 ? existingTags.map((t) => `#${t}`).join(" ") : "";
+
     container.innerHTML = `
         <div class="settings-section">
+            <button type="button" class="create-close" onclick="closeCreateMenu()">✕</button>
             <div class="settings-header" style="border:none; margin-bottom:1rem; padding-bottom:0;">
                 <h2>${title}</h2>
                 <p>${subtitle}</p>
@@ -6178,7 +6289,13 @@ async function openCreateMenu(
 
                 <div class="form-group">
                     <label>Description</label>
-                    <textarea id="create-desc" class="form-input" rows="4" placeholder="Détaillez ce que vous avez fait, appris ou surmonté..." required>${isEdit ? existingContent.description : ""}</textarea>
+                    <textarea id="create-desc" class="form-input" rows="4" placeholder="Détaillez ce que vous avez fait, appris ou surmonté..." required>${isEdit ? existingCleanDesc : ""}</textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Hashtags (séparés par espaces ou virgules)</label>
+                    <input type="text" id="create-tags" class="form-input" placeholder="#build #vlog #code" value="${tagsPrefill}">
+                    <p class="form-hint">Servez-vous de 3 à 8 tags max pour personnaliser le feed.</p>
                 </div>
 
                 <div class="form-group">
@@ -6190,29 +6307,21 @@ async function openCreateMenu(
                     </select>
                 </div>
 
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Projet (Optionnel)</label>
-                        <select id="create-project" class="form-input">
-                            <option value="">Aucun projet spécifique</option>
-                            ${projects.map((p) => `<option value="${p.id}" ${isEdit && (existingContent.projectId === p.id || existingContent.project_id === p.id) ? "selected" : ""}>${p.name}</option>`).join("")}
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>ARC (Requis)</label>
-                        <select id="create-arc" class="form-input" required>
-                            <option value="" disabled ${!isEdit && !preSelectedArcId ? "selected" : ""}>Choisir un ARC...</option>
-                            ${arcOptions}
-                        </select>
-                    </div>
+                <div class="form-group">
+                    <label>ARC (Requis)</label>
+                    <select id="create-arc" class="form-input" required>
+                        <option value="" disabled ${!isEdit && !preSelectedArcId ? "selected" : ""}>Choisir un ARC...</option>
+                        ${arcOptions}
+                    </select>
                 </div>
 
                 <div class="form-group">
-                    <label>Type de média</label>
+                    <label>Type de publication</label>
                     <select id="create-type" class="form-input">
                         <option value="image" ${isEdit && existingContent.type === "image" ? "selected" : ""}>Image</option>
                         <option value="video" ${isEdit && existingContent.type === "video" ? "selected" : ""}>Vidéo</option>
                         <option value="live" ${isEdit && existingContent.type === "live" ? "selected" : ""}>Live / Stream</option>
+                        <option value="text" ${isEdit && existingContent.type === "text" ? "selected" : ""}>Post texte</option>
                     </select>
                 </div>
 
@@ -6294,6 +6403,13 @@ async function openCreateMenu(
                 urlContainer.style.display = "block";
                 // Use the live URL if set
                 mediaUrlInput.value = liveInput.value;
+            } else if (type === "text") {
+                uploadContainer.style.display = "none";
+                urlContainer.style.display = "none";
+                mediaUrlInput.value = "";
+                mediaTypeInput.value = "text";
+                if (previewContainer) previewContainer.style.display = "none";
+                if (placeholder) placeholder.style.display = "block";
             } else {
                 uploadContainer.style.display = "block";
                 urlContainer.style.display = "none";
@@ -6370,12 +6486,15 @@ async function openCreateMenu(
     // Préremplir les champs existants si édition
     if (isEdit && existingContent) {
         const mediaUrl = existingContent.media_url || existingContent.mediaUrl;
-        if (mediaUrl) {
+        if (existingContent.type === "text") {
+            uploadContainer.style.display = "none";
+            urlContainer.style.display = "none";
+        } else if (mediaUrl) {
             previewContainer.style.display = "block";
             placeholder.style.display = "none";
 
-            if (existingContent.type === "image") {
-                previewContainer.innerHTML = `<img src="${mediaUrl}" style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">`;
+                if (existingContent.type === "image") {
+                    previewContainer.innerHTML = `<img src="${mediaUrl}" style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">`;
             } else if (existingContent.type === "video") {
                 previewContainer.innerHTML = `<video src="${mediaUrl}" controls style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);"></video>`;
             } else if (existingContent.type === "live") {
@@ -6393,10 +6512,21 @@ async function openCreateMenu(
             e.preventDefault();
 
             const mediaUrl = document.getElementById("create-media-url").value;
-            if (!mediaUrl) {
-                alert("Veuillez uploader une image ou une vidéo.");
+            const selectedType =
+                document.getElementById("create-media-type").value ||
+                document.getElementById("create-type").value;
+            if (selectedType !== "text" && !mediaUrl) {
+                alert("Ajoutez un média ou sélectionnez \"Post texte\".");
                 return;
             }
+
+            const tagsInput = document.getElementById("create-tags").value;
+            const parsedTags = parseTagsInput(tagsInput);
+            const baseDescription = document.getElementById("create-desc").value;
+            const descriptionWithTags = encodeDescriptionWithTags(
+                baseDescription,
+                parsedTags,
+            );
 
             const btnSave = e.target.querySelector(".btn-save");
             const originalText = btnSave.textContent;
@@ -6409,12 +6539,10 @@ async function openCreateMenu(
                     document.getElementById("create-day").value,
                 ),
                 title: document.getElementById("create-title").value,
-                description: document.getElementById("create-desc").value,
+                description: descriptionWithTags,
                 state: document.getElementById("create-state").value,
-                type: document.getElementById("create-media-type").value,
-                mediaUrl: mediaUrl,
-                projectId:
-                    document.getElementById("create-project").value || null,
+                type: selectedType,
+                mediaUrl: selectedType === "text" ? null : mediaUrl,
                 arcId: document.getElementById("create-arc").value || null,
             };
 

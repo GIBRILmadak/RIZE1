@@ -204,6 +204,13 @@
 
         <!-- BOUTON RÉGLAGES (FIXED POSITION) -->
         <div id="settings-button-container"></div>
+        <!-- Bouton flottant pour publier une trace -->
+        <div id="floating-create-container">
+            <button id="floating-create-btn" class="btn-add" title="Publier une trace">
+                <img src="icons/plus.svg" alt="Publier">
+                <span>Publier</span>
+            </button>
+        </div>
 
         <!-- Configuration Supabase -->
         <script src="js/supabase-config.js"></script>
@@ -231,6 +238,22 @@
                     initializeNotifications();
                     document.getElementById("notification-btn").style.display =
                         "flex";
+                }
+
+                // Bouton flottant de publication
+                const floatingBtn = document.getElementById(
+                    "floating-create-btn",
+                );
+                if (floatingBtn) {
+                    floatingBtn.addEventListener("click", () => {
+                        if (!window.currentUser) {
+                            alert("Connectez-vous pour publier une trace.");
+                            return;
+                        }
+                        if (typeof window.openCreateMenu === "function") {
+                            window.openCreateMenu(window.currentUser.id);
+                        }
+                    });
                 }
             });
         </script>
