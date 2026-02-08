@@ -1015,6 +1015,113 @@ function encodeDescriptionWithTags(description, tags = []) {
     return `${base}${base ? "\n\n" : ""}#hashtags: ${unique.join(",")}`;
 }
 
+// Annonces : helpers
+function isAnnouncementContent(content) {
+    return (
+        content &&
+        content.type === "text" &&
+        Array.isArray(content.tags) &&
+        content.tags.includes("annonce")
+    );
+}
+
+function loadAnnouncementReplies() {
+    try {
+        return JSON.parse(localStorage.getItem("rize_annonce_replies")) || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function saveAnnouncementReplies(store) {
+    try {
+        localStorage.setItem("rize_annonce_replies", JSON.stringify(store));
+    } catch (e) {
+        // ignore
+    }
+}
+
+function getReplyCount(contentId) {
+    const store = loadAnnouncementReplies();
+    const list = store[contentId] || [];
+    return list.length;
+}
+
+function renderAnnouncementReplies(contentId) {
+    const store = loadAnnouncementReplies();
+    const list = store[contentId] || [];
+    if (list.length === 0) {
+        return `<div class="reply-empty">Aucune réponse pour le moment.</div>`;
+    }
+    return `
+        <div class="reply-list">
+            ${list
+                .slice(-20)
+                .map((r) => {
+                    const user = getUser(r.userId);
+                    const name = user ? user.name : "Utilisateur";
+                    const avatar =
+                        user?.avatar ||
+                        "https://api.dicebear.com/7.x/identicon/svg?seed=anon";
+                    const timeLabel = timeAgo(r.createdAt);
+                    return `
+                        <div class="reply-item">
+                            <img src="${avatar}" class="reply-avatar" alt="${name}">
+                            <div class="reply-body">
+                                <div class="reply-meta">
+                                    <span class="reply-name">${name}</span>
+                                    <span class="reply-time">${timeLabel}</span>
+                                </div>
+                                <p>${r.body}</p>
+                            </div>
+                        </div>
+                    `;
+                })
+                .join("")}
+        </div>
+    `;
+}
+
+function refreshRepliesUI(contentId) {
+    document
+        .querySelectorAll(`[data-replies-container="${contentId}"]`)
+        .forEach((el) => {
+            el.innerHTML = renderAnnouncementReplies(contentId);
+        });
+    const count = getReplyCount(contentId);
+    document
+        .querySelectorAll(`[data-reply-count="${contentId}"]`)
+        .forEach((el) => (el.textContent = count));
+}
+
+function submitAnnouncementReply(contentId, inputId) {
+    if (!contentId) return;
+    if (!currentUser) {
+        alert("Connectez-vous pour répondre à une annonce.");
+        return;
+    }
+    const textarea = document.getElementById(inputId);
+    const reply =
+        textarea && textarea.value ? textarea.value.trim() : prompt("Votre réponse :");
+    if (!reply) return;
+    const store = loadAnnouncementReplies();
+    const list = store[contentId] || [];
+    list.push({
+        userId: currentUser.id,
+        body: reply,
+        createdAt: new Date().toISOString(),
+    });
+    store[contentId] = list.slice(-100);
+    saveAnnouncementReplies(store);
+    if (textarea) textarea.value = "";
+    refreshRepliesUI(contentId);
+    ToastManager?.success?.("Réponse envoyée", "Merci pour votre retour !");
+}
+
+function openReplyPrompt(contentId) {
+    submitAnnouncementReply(contentId);
+}
+
 // Récupérer le contenu d'un utilisateur
 function getUserContentLocal(userId) {
     const contents = userContents[userId] || [];
@@ -2567,7 +2674,7 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
                     </div>
                 </div>
             `;
-        } else if (latestContent.type === "image") {
+        } else if (latestContent.type === "image" || latestContent.type === "text") {
             mediaHtml = `
                 <div class="card-media-wrap">
                     <img class="card-media" src="${latestContent.mediaUrl}" alt="${latestContent.title || "Preview"}" loading="lazy" decoding="async">
@@ -2581,6 +2688,11 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
             `;
         }
     }
+
+    const isAnnouncement = isAnnouncementContent(latestContent);
+    const replyCount = isAnnouncement
+        ? getReplyCount(latestContent.contentId)
+        : 0;
 
     const isTextContent =
         latestContent &&
@@ -2738,6 +2850,7 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
             ${mediaHtml}
             <div class="card-content">
                 ${arcInfo}
+                ${isAnnouncement ? '<span class="announcement-chip">Annonce</span>' : ""}
                 <div class="card-status" style="border-color: ${stateColor}20; color: ${stateColor};">
                     <span class="status-day">J-${latestContent ? latestContent.dayNumber : 0}</span>
                     ${latestContent ? latestContent.title : "Aucune activité"}
@@ -3445,6 +3558,10 @@ async function renderImmersiveFeed(contents) {
                     : content.state === "failure"
                       ? "#Bloqué"
                       : "#Pause";
+            const isAnnouncement = isAnnouncementContent(content);
+            const replyCount = isAnnouncement
+                ? getReplyCount(content.contentId)
+                : 0;
 
             const contentBadges = getContentBadges(content);
             // Include user badges as well (consistent with Discover cards)
@@ -3515,6 +3632,7 @@ async function renderImmersiveFeed(contents) {
                     <div class="post-info">
                         <span class="step-indicator">Jour ${content.dayNumber}</span>
                         <span class="state-tag">${stateLabel}</span>
+                        ${isAnnouncement ? '<span class="announcement-chip">Annonce</span>' : ""}
                         
                         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                             <h2>${content.title}</h2>
@@ -6265,6 +6383,9 @@ async function openCreateMenu(
         extractTagsFromDescription(existingRawDesc);
     const tagsPrefill =
         existingTags.length > 0 ? existingTags.map((t) => `#${t}`).join(" ") : "";
+    const isAnnouncementEdit =
+        existingTags && existingTags.includes("annonce") ? true : false;
+    let currentMode = isAnnouncementEdit ? "announcement" : "trace";
 
     container.innerHTML = `
         <div class="settings-section">
@@ -6273,32 +6394,40 @@ async function openCreateMenu(
                 <h2>${title}</h2>
                 <p>${subtitle}</p>
             </div>
-            
+
             <form id="create-form">
                 ${isEdit ? `<input type="hidden" id="content-id" value="${existingContent.contentId || existingContent.id}">` : ""}
-                
                 <div class="form-group">
+                    <label>Mode de publication</label>
+                    <div class="mode-switch">
+                        <button type="button" class="${isAnnouncementEdit ? "" : "active"}" data-mode="trace">Trace</button>
+                        <button type="button" class="${isAnnouncementEdit ? "active" : ""}" data-mode="announcement">Annonce</button>
+                    </div>
+                    <p class="form-hint">Les annonces (post texte) acceptent une image optionnelle et peuvent recevoir des réponses.</p>
+                </div>
+                
+                <div class="form-group form-group-day">
                     <label>Jour #</label>
                     <input type="number" id="create-day" class="form-input" value="${nextDay}" required>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group form-group-title">
                     <label>Titre de l'accomplissement</label>
                     <input type="text" id="create-title" class="form-input" placeholder="Ex: Intégration de l'API terminée" value="${isEdit ? existingContent.title : ""}" required>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group form-group-desc">
                     <label>Description</label>
-                    <textarea id="create-desc" class="form-input" rows="4" placeholder="Détaillez ce que vous avez fait, appris ou surmonté..." required>${isEdit ? existingCleanDesc : ""}</textarea>
+                    <textarea id="create-desc" class="form-input" rows="4" placeholder="Détaillez ce que vous avez fait, appris ou surmonté...">${isEdit ? existingCleanDesc : ""}</textarea>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group form-group-tags">
                     <label>Hashtags (séparés par espaces ou virgules)</label>
                     <input type="text" id="create-tags" class="form-input" placeholder="#build #vlog #code" value="${tagsPrefill}">
                     <p class="form-hint">Servez-vous de 3 à 8 tags max pour personnaliser le feed.</p>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group form-group-state">
                     <label>État</label>
                     <select id="create-state" class="form-input">
                         <option value="success" ${isEdit && existingContent.state === "success" ? "selected" : ""}>Victoire (Vert)</option>
@@ -6307,7 +6436,7 @@ async function openCreateMenu(
                     </select>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group form-group-arc">
                     <label>ARC (Requis)</label>
                     <select id="create-arc" class="form-input" required>
                         <option value="" disabled ${!isEdit && !preSelectedArcId ? "selected" : ""}>Choisir un ARC...</option>
@@ -6321,8 +6450,12 @@ async function openCreateMenu(
                         <option value="image" ${isEdit && existingContent.type === "image" ? "selected" : ""}>Image</option>
                         <option value="video" ${isEdit && existingContent.type === "video" ? "selected" : ""}>Vidéo</option>
                         <option value="live" ${isEdit && existingContent.type === "live" ? "selected" : ""}>Live / Stream</option>
-                        <option value="text" ${isEdit && existingContent.type === "text" ? "selected" : ""}>Post texte</option>
                     </select>
+                    <div class="type-quick">
+                        <button type="button" data-type="image">Image</button>
+                        <button type="button" data-type="video">Vidéo</button>
+                        <button type="button" data-type="live">Live</button>
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -6382,6 +6515,11 @@ async function openCreateMenu(
     const uploadContainer = document.getElementById("media-upload-container");
     const urlContainer = document.getElementById("media-url-container");
     const liveInput = document.getElementById("create-live-url");
+    const dayGroup = container.querySelector(".form-group-day");
+    const stateGroup = container.querySelector(".form-group-state");
+    const arcGroup = container.querySelector(".form-group-arc");
+    const descGroup = container.querySelector(".form-group-desc");
+    const tagsGroup = container.querySelector(".form-group-tags");
 
     // Initialize file upload
     if (typeof initializeFileInput === "function") {
@@ -6393,28 +6531,107 @@ async function openCreateMenu(
         const fileInput = document.getElementById("create-media-file");
         const loader = document.getElementById("create-media-loader");
 
+        const typeButtons = Array.from(
+            container.querySelectorAll(".type-quick button"),
+        );
+        const modeButtons = Array.from(
+            container.querySelectorAll(".mode-switch button"),
+        );
+        const syncTypeButtons = (value) => {
+            typeButtons.forEach((btn) =>
+                btn.classList.toggle(
+                    "active",
+                    btn.dataset.type === value,
+                ),
+            );
+        };
+        const syncModeButtons = (value) => {
+            modeButtons.forEach((btn) =>
+                btn.classList.toggle("active", btn.dataset.mode === value),
+            );
+        };
+
+        const applyMode = (mode) => {
+            currentMode = mode;
+            syncModeButtons(mode);
+            if (mode === "announcement") {
+                typeSelect.value = "text";
+                typeSelect.disabled = true;
+                mediaTypeInput.value = "text";
+                fileInput.accept = "image/*";
+                uploadContainer.style.display = "block";
+                urlContainer.style.display = "none";
+                if (dayGroup) {
+                    dayGroup.style.display = "none";
+                    const dayInput = dayGroup.querySelector("input");
+                    if (dayInput) dayInput.required = false;
+                }
+                if (stateGroup) {
+                    stateGroup.style.display = "none";
+                    const stateSelect = stateGroup.querySelector("select");
+                    if (stateSelect) stateSelect.required = false;
+                }
+                if (arcGroup) {
+                    arcGroup.style.display = "none";
+                    const arcSelect = arcGroup.querySelector("select");
+                    if (arcSelect) arcSelect.required = false;
+                }
+                if (tagsGroup) tagsGroup.style.display = "none";
+                if (descGroup) {
+                    descGroup.style.display = "none";
+                    const descTextarea = descGroup.querySelector("textarea");
+                    if (descTextarea) descTextarea.required = false;
+                }
+            } else {
+                typeSelect.disabled = false;
+                if (dayGroup) {
+                    dayGroup.style.display = "";
+                    const dayInput = dayGroup.querySelector("input");
+                    if (dayInput) dayInput.required = true;
+                }
+                if (stateGroup) {
+                    stateGroup.style.display = "";
+                    const stateSelect = stateGroup.querySelector("select");
+                    if (stateSelect) stateSelect.required = true;
+                }
+                if (arcGroup) {
+                    arcGroup.style.display = "";
+                    const arcSelect = arcGroup.querySelector("select");
+                    if (arcSelect) arcSelect.required = true;
+                }
+                if (tagsGroup) tagsGroup.style.display = "";
+                if (descGroup) {
+                    descGroup.style.display = "";
+                    const descTextarea = descGroup.querySelector("textarea");
+                    if (descTextarea) descTextarea.required = true;
+                }
+            }
+            typeSelect.dispatchEvent(new Event("change"));
+        };
+
+        modeButtons.forEach((btn) =>
+            btn.addEventListener("click", () => applyMode(btn.dataset.mode)),
+        );
+
         // Toggle logic
         typeSelect.addEventListener("change", () => {
             const type = typeSelect.value;
             mediaTypeInput.value = type;
+            syncTypeButtons(type);
 
             if (type === "live") {
                 uploadContainer.style.display = "none";
                 urlContainer.style.display = "block";
-                // Use the live URL if set
                 mediaUrlInput.value = liveInput.value;
             } else if (type === "text") {
-                uploadContainer.style.display = "none";
+                uploadContainer.style.display = "block";
                 urlContainer.style.display = "none";
-                mediaUrlInput.value = "";
+                fileInput.accept = "image/*";
                 mediaTypeInput.value = "text";
-                if (previewContainer) previewContainer.style.display = "none";
                 if (placeholder) placeholder.style.display = "block";
             } else {
                 uploadContainer.style.display = "block";
                 urlContainer.style.display = "none";
-
-                // Update accept attribute
                 if (type === "image") {
                     fileInput.accept = "image/*";
                 } else if (type === "video") {
@@ -6422,6 +6639,17 @@ async function openCreateMenu(
                 }
             }
         });
+        typeButtons.forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const t = btn.dataset.type;
+                typeSelect.value = t;
+                typeSelect.dispatchEvent(new Event("change"));
+            });
+        });
+        // initial sync
+        syncTypeButtons(typeSelect.value);
+        syncModeButtons(currentMode);
+        if (currentMode === "announcement") applyMode("announcement");
 
         // Live URL handler
         liveInput.addEventListener("input", () => {
@@ -6487,8 +6715,13 @@ async function openCreateMenu(
     if (isEdit && existingContent) {
         const mediaUrl = existingContent.media_url || existingContent.mediaUrl;
         if (existingContent.type === "text") {
-            uploadContainer.style.display = "none";
+            uploadContainer.style.display = "block";
             urlContainer.style.display = "none";
+            if (mediaUrl) {
+                previewContainer.style.display = "block";
+                placeholder.style.display = "none";
+                previewContainer.innerHTML = `<img src="${mediaUrl}" style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">`;
+            }
         } else if (mediaUrl) {
             previewContainer.style.display = "block";
             placeholder.style.display = "none";
@@ -6521,8 +6754,14 @@ async function openCreateMenu(
             }
 
             const tagsInput = document.getElementById("create-tags").value;
-            const parsedTags = parseTagsInput(tagsInput);
-            const baseDescription = document.getElementById("create-desc").value;
+            let parsedTags = parseTagsInput(tagsInput);
+            if (currentMode === "announcement" && !parsedTags.includes("annonce")) {
+                parsedTags = ["annonce", ...parsedTags];
+            }
+            const baseDescription =
+                currentMode === "announcement"
+                    ? document.getElementById("create-desc").value || ""
+                    : document.getElementById("create-desc").value;
             const descriptionWithTags = encodeDescriptionWithTags(
                 baseDescription,
                 parsedTags,
@@ -6535,15 +6774,22 @@ async function openCreateMenu(
 
             const contentData = {
                 userId: userId,
-                dayNumber: parseInt(
-                    document.getElementById("create-day").value,
-                ),
+                dayNumber:
+                    currentMode === "announcement"
+                        ? 0
+                        : parseInt(document.getElementById("create-day").value),
                 title: document.getElementById("create-title").value,
                 description: descriptionWithTags,
-                state: document.getElementById("create-state").value,
-                type: selectedType,
-                mediaUrl: selectedType === "text" ? null : mediaUrl,
-                arcId: document.getElementById("create-arc").value || null,
+                state:
+                    currentMode === "announcement"
+                        ? "pause"
+                        : document.getElementById("create-state").value,
+                type: currentMode === "announcement" ? "text" : selectedType,
+                mediaUrl: mediaUrl || null,
+                arcId:
+                    currentMode === "announcement"
+                        ? null
+                        : document.getElementById("create-arc").value || null,
             };
 
             let result;
@@ -6752,6 +6998,7 @@ window.restoreContentByAdmin = restoreContentByAdmin;
 window.hardDeleteContentByAdmin = hardDeleteContentByAdmin;
 window.hardDeleteUserByAdmin = hardDeleteUserByAdmin;
 window.toggleFollow = toggleFollow;
+window.openReplyPrompt = openReplyPrompt;
 if (typeof openArcDetails !== "undefined") {
     window.openArcDetails = openArcDetails;
 }

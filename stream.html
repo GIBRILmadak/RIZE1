@@ -100,7 +100,7 @@
                 </div>
 
                 <div class="stream-info">
-                    <div class="stream-viewers stream-viewers-info">
+                    <button class="stream-viewers stream-viewers-info" id="viewer-list-btn" type="button" title="Voir les viewers">
                         <svg
                             width="16"
                             height="16"
@@ -115,7 +115,7 @@
                             <circle cx="12" cy="12" r="3"></circle>
                         </svg>
                         <span id="stream-viewer-count">0</span>
-                    </div>
+                    </button>
                     <h1 id="stream-title" class="stream-title">
                         Titre du Stream
                     </h1>
@@ -138,20 +138,20 @@
 
                     <!-- Actions du stream -->
                     <div class="stream-actions">
-                        <button class="stream-action-btn btn" id="like-btn">
-                            <svg
-                                class="stream-action-icon"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                            >
-                                <path
-                                    d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-                                />
-                            </svg>
-                            <span class="btn-text">J'aime</span>
-                        </button>
+                        <div class="stream-host-controls" id="stream-host-controls">
+                            <button class="stream-action-btn btn stream-action-danger" id="end-stream-btn" type="button" title="Arrêter le live">
+                                <span class="btn-text">Arrêter</span>
+                            </button>
+                            <button class="stream-action-btn btn" id="switch-camera-btn" type="button" title="Changer de caméra">
+                                <span class="btn-text">Caméra</span>
+                            </button>
+                            <button class="stream-action-btn btn" id="mute-mic-btn" type="button" title="Couper le micro">
+                                <span class="btn-text">Muet</span>
+                            </button>
+                            <button class="stream-action-btn btn" id="share-screen-btn" type="button" title="Partager l'écran">
+                                <span class="btn-text">Écran</span>
+                            </button>
+                        </div>
                         <button class="stream-action-btn btn" id="follow-btn">
                             <svg
                                 class="stream-action-icon"
@@ -235,6 +235,20 @@
                         <span class="btn-text">Envoyer</span>
                     </button>
                 </form>
+            </div>
+        </div>
+
+        <div class="viewer-list-modal" id="viewer-list-modal" aria-hidden="true">
+            <div class="viewer-list-panel" role="dialog" aria-modal="true" aria-labelledby="viewer-list-title">
+                <div class="viewer-list-header">
+                    <h3 id="viewer-list-title">Viewers du stream</h3>
+                    <button class="viewer-list-close" id="viewer-list-close" type="button" aria-label="Fermer">
+                        ✕
+                    </button>
+                </div>
+                <div class="viewer-list-body" id="viewer-list-body">
+                    <div class="viewer-list-empty">Chargement...</div>
+                </div>
             </div>
         </div>
 

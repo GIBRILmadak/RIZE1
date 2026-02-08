@@ -23,6 +23,12 @@ if (!window.__streamingLoaded) {
     let isStreamHost = false;
     let pendingViewerJoins = new Set();
     let viewerCountInterval = null;
+    let chatSyncInterval = null;
+    let lastChatCreatedAt = null;
+    let currentVideoDeviceId = null;
+    let lastCameraDeviceId = null;
+    let isMicMuted = false;
+    let isScreenSharing = false;
     const renderedChatMessageIds = new Set();
 
 // Créer une session de streaming
@@ -152,7 +158,7 @@ function subscribeToStream(streamId) {
                 filter: `stream_id=eq.${streamId}`
             },
             (payload) => {
-                handleNewChatMessage(payload.new);
+                void handleNewChatMessage(payload.new);
             }
         )
         .subscribe();
@@ -173,6 +179,14 @@ function subscribeToStream(streamId) {
             }
         )
         .subscribe();
+
+    if (chatSyncInterval) {
+        clearInterval(chatSyncInterval);
+    }
+    chatSyncInterval = setInterval(() => {
+        if (!currentStream?.id) return;
+        void fetchNewChatMessages(currentStream.id);
+    }, 4000);
 }
 
 // Envoyer un message dans le chat
@@ -218,11 +232,40 @@ async function loadChatHistory(streamId, limit = 50) {
             const key = getChatMessageKey(msg);
             if (key) renderedChatMessageIds.add(key);
         });
+        if (messages.length > 0) {
+            const lastMessage = messages[messages.length - 1];
+            lastChatCreatedAt = lastMessage.created_at || lastChatCreatedAt;
+        }
         return { success: true, messages };
         
     } catch (error) {
         console.error('Erreur chargement chat:', error);
         return { success: false, error: error.message };
+    }
+}
+
+async function fetchNewChatMessages(streamId) {
+    try {
+        let query = supabase
+            .from('stream_messages')
+            .select('*, users(name, avatar)')
+            .eq('stream_id', streamId)
+            .order('created_at', { ascending: true })
+            .limit(50);
+
+        if (lastChatCreatedAt) {
+            query = query.gt('created_at', lastChatCreatedAt);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        if (!data || data.length === 0) return;
+
+        data.forEach(msg => {
+            void handleNewChatMessage(msg);
+        });
+    } catch (error) {
+        console.warn('Chat sync fallback échoué:', error);
     }
 }
 
@@ -236,7 +279,7 @@ function getChatMessageKey(message) {
 }
 
 // Gérer un nouveau message de chat
-function handleNewChatMessage(message) {
+async function handleNewChatMessage(message) {
     const chatContainer = document.getElementById('stream-chat-messages');
     if (!chatContainer) return;
     
@@ -244,11 +287,30 @@ function handleNewChatMessage(message) {
     if (key && renderedChatMessageIds.has(key)) return;
     if (key) renderedChatMessageIds.add(key);
 
+    if (!message.users && message.user_id) {
+        try {
+            const { data } = await supabase
+                .from('users')
+                .select('name, avatar')
+                .eq('id', message.user_id)
+                .single();
+            if (data) {
+                message.users = data;
+            }
+        } catch (error) {
+            // Fallback silencieux
+        }
+    }
+
     const messageElement = createChatMessageElement(message);
     chatContainer.appendChild(messageElement);
     
     // Scroll vers le bas
     chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    if (message.created_at) {
+        lastChatCreatedAt = message.created_at;
+    }
 }
 
 // Créer un élément de message de chat
@@ -353,6 +415,10 @@ function startViewerCountSync(streamId) {
     if (viewerCountInterval) {
         clearInterval(viewerCountInterval);
         viewerCountInterval = null;
+    }
+    if (chatSyncInterval) {
+        clearInterval(chatSyncInterval);
+        chatSyncInterval = null;
     }
     const shouldUpdateSession = !!isStreamHost;
     syncViewerCount(streamId, { updateSession: shouldUpdateSession });
@@ -460,6 +526,7 @@ function cleanupStream() {
     isStreamHost = false;
     pendingViewerJoins.clear();
     renderedChatMessageIds.clear();
+    lastChatCreatedAt = null;
     
     currentStream = null;
 }
@@ -723,8 +790,29 @@ function startViewerHeartbeat(streamId) {
 
 // Gérer la fin du stream
 function handleStreamEnded() {
-    alert('Le stream est terminé');
-    leaveStream();
+    setChatEnabled(false);
+    if (chatSyncInterval) {
+        clearInterval(chatSyncInterval);
+        chatSyncInterval = null;
+    }
+
+    const status = document.getElementById('stream-status');
+    if (status) {
+        status.textContent = '⏹️ LIVE TERMINÉ';
+        status.classList.remove('live');
+    }
+
+    const followBtn = document.getElementById('follow-btn');
+    const shareBtn = document.getElementById('share-btn');
+    const buttons = [followBtn, shareBtn].filter(Boolean);
+    buttons.forEach(btn => {
+        btn.disabled = true;
+        btn.classList.add('disabled');
+        btn.style.opacity = '0.6';
+        btn.style.cursor = 'not-allowed';
+    });
+
+    showStreamEndedMessage();
 }
 
 // Récupérer les streams en direct
@@ -765,6 +853,10 @@ function syncAudioButtonState(isMuted) {
     audioBtn.classList.toggle('active', !isMuted);
 }
 
+function isMobileDevice() {
+    return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 function toggleAudio() {
     const video = document.getElementById('stream-video');
     if (!video) return;
@@ -778,12 +870,281 @@ function toggleAudio() {
     }
 }
 
+function updateMicButtonState() {
+    const micBtn = document.getElementById('mute-mic-btn');
+    if (!micBtn) return;
+    micBtn.classList.toggle('active', isMicMuted);
+    const label = micBtn.querySelector('.btn-text');
+    if (label) {
+        label.textContent = isMicMuted ? 'Micro coupé' : 'Muet';
+    }
+}
+
+function updateScreenShareButtonState() {
+    const shareBtn = document.getElementById('share-screen-btn');
+    if (!shareBtn) return;
+    shareBtn.classList.toggle('active', isScreenSharing);
+    const label = shareBtn.querySelector('.btn-text');
+    if (label) {
+        label.textContent = isScreenSharing ? 'Arrêter écran' : 'Écran';
+    }
+}
+
+function replaceTrackForPeers(kind, newTrack) {
+    peerConnections.forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === kind);
+        if (sender) {
+            sender.replaceTrack(newTrack).catch(err => {
+                console.warn('replaceTrack échoué:', err);
+            });
+        }
+    });
+}
+
+async function startCameraStream(deviceId = null) {
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    const constraints = deviceId
+        ? { video: { deviceId: { exact: deviceId } }, audio: false }
+        : {
+            video: isMobileDevice()
+                ? { facingMode: { ideal: 'user' } }
+                : true,
+            audio: false
+        };
+    const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const newTrack = newStream.getVideoTracks()[0];
+    if (!newTrack) return;
+
+    if (!localMediaStream) {
+        localMediaStream = new MediaStream();
+    }
+
+    const currentTrack = localMediaStream?.getVideoTracks?.()[0];
+    if (currentTrack) {
+        localMediaStream.removeTrack(currentTrack);
+        currentTrack.stop();
+    }
+    localMediaStream.addTrack(newTrack);
+    currentVideoDeviceId = newTrack.getSettings?.().deviceId || deviceId || null;
+    lastCameraDeviceId = currentVideoDeviceId || lastCameraDeviceId;
+    replaceTrackForPeers('video', newTrack);
+    isScreenSharing = false;
+    updateScreenShareButtonState();
+
+    const video = document.getElementById('stream-video');
+    if (video) {
+        video.srcObject = localMediaStream;
+    }
+}
+
+async function switchCamera() {
+    if (!localMediaStream || !navigator.mediaDevices?.enumerateDevices) return;
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoInputs = devices.filter(d => d.kind === 'videoinput');
+    if (videoInputs.length === 0) return;
+
+    const currentTrack = localMediaStream.getVideoTracks()[0];
+    const currentId = currentTrack?.getSettings?.().deviceId || currentVideoDeviceId;
+    const currentIndex = videoInputs.findIndex(d => d.deviceId === currentId);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % videoInputs.length;
+    const nextDevice = videoInputs[nextIndex];
+    if (!nextDevice) return;
+
+    await startCameraStream(nextDevice.deviceId);
+}
+
+function toggleMicMute() {
+    if (!localMediaStream) return;
+    const audioTracks = localMediaStream.getAudioTracks();
+    if (audioTracks.length === 0) return;
+    isMicMuted = !isMicMuted;
+    audioTracks.forEach(track => {
+        track.enabled = !isMicMuted;
+    });
+    updateMicButtonState();
+}
+
+async function shareScreen() {
+    if (!navigator.mediaDevices?.getDisplayMedia) return;
+    if (isScreenSharing) {
+        isScreenSharing = false;
+        updateScreenShareButtonState();
+        if (lastCameraDeviceId) {
+            await startCameraStream(lastCameraDeviceId);
+        } else {
+            await startCameraStream();
+        }
+        return;
+    }
+    try {
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false
+        });
+        const displayTrack = displayStream.getVideoTracks()[0];
+        if (!displayTrack) return;
+
+        const currentTrack = localMediaStream?.getVideoTracks?.()[0];
+        if (currentTrack) {
+            localMediaStream.removeTrack(currentTrack);
+            currentTrack.stop();
+        }
+        localMediaStream.addTrack(displayTrack);
+        replaceTrackForPeers('video', displayTrack);
+
+        const video = document.getElementById('stream-video');
+        if (video) {
+            video.srcObject = localMediaStream;
+        }
+
+        isScreenSharing = true;
+        updateScreenShareButtonState();
+
+        displayTrack.onended = async () => {
+            isScreenSharing = false;
+            updateScreenShareButtonState();
+            if (lastCameraDeviceId) {
+                await startCameraStream(lastCameraDeviceId);
+            }
+        };
+    } catch (error) {
+        console.warn('Partage écran annulé ou impossible:', error);
+    }
+}
+
+function setupHostControls() {
+    const endBtn = document.getElementById('end-stream-btn');
+    const switchBtn = document.getElementById('switch-camera-btn');
+    const micBtn = document.getElementById('mute-mic-btn');
+    const shareBtn = document.getElementById('share-screen-btn');
+
+    if (endBtn && !endBtn.dataset.bound) {
+        endBtn.dataset.bound = 'true';
+        endBtn.addEventListener('click', async () => {
+            if (confirm('Voulez-vous vraiment arrêter le live ?')) {
+                try {
+                    endBtn.disabled = true;
+                    endBtn.style.opacity = '0.7';
+                    const result = await endStream();
+                    if (!result || !result.success) {
+                        const message = result?.error || 'Impossible de terminer le live';
+                        console.error('Fin du live échouée:', message);
+                        if (window.ToastManager) {
+                            ToastManager.error('Erreur', message);
+                        } else {
+                            alert(message);
+                        }
+                        endBtn.disabled = false;
+                        endBtn.style.opacity = '';
+                        return;
+                    }
+                    if (localMediaStream) {
+                        localMediaStream.getTracks().forEach(track => track.stop());
+                    }
+                    window.location.href = 'index.html';
+                } catch (error) {
+                    console.error('Erreur bouton fin de live:', error);
+                    if (window.ToastManager) {
+                        ToastManager.error('Erreur', error?.message || 'Impossible de terminer le live');
+                    }
+                    endBtn.disabled = false;
+                    endBtn.style.opacity = '';
+                }
+            }
+        });
+    }
+
+    if (shareBtn && (isMobileDevice() || !navigator.mediaDevices?.getDisplayMedia)) {
+        shareBtn.disabled = true;
+        shareBtn.classList.add('disabled');
+        shareBtn.title = 'Partage écran indisponible sur mobile';
+    }
+
+    if (switchBtn) {
+        switchBtn.addEventListener('click', () => {
+            switchCamera().catch(err => console.error('Switch camera error:', err));
+        });
+    }
+
+    if (micBtn) {
+        micBtn.addEventListener('click', () => toggleMicMute());
+    }
+
+    if (shareBtn) {
+        shareBtn.addEventListener('click', () => {
+            if (shareBtn.disabled) return;
+            shareScreen();
+        });
+    }
+
+    updateMicButtonState();
+    updateScreenShareButtonState();
+
+    if (switchBtn && navigator.mediaDevices?.enumerateDevices) {
+        navigator.mediaDevices.enumerateDevices()
+            .then(devices => {
+                const videoInputs = devices.filter(d => d.kind === 'videoinput');
+                if (videoInputs.length < 2) {
+                    switchBtn.disabled = true;
+                    switchBtn.classList.add('disabled');
+                    switchBtn.title = 'Une seule caméra détectée';
+                }
+            })
+            .catch(() => {});
+    }
+}
+
+function closeViewerListModal() {
+    const modal = document.getElementById('viewer-list-modal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+async function openViewerListModal() {
+    const modal = document.getElementById('viewer-list-modal');
+    const body = document.getElementById('viewer-list-body');
+    if (!modal || !body || !currentStream?.id) return;
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    body.innerHTML = '<div class="viewer-list-empty">Chargement...</div>';
+
+    try {
+        const cutoffIso = new Date(Date.now() - 30000).toISOString();
+        const { data, error } = await supabase
+            .from('stream_viewers')
+            .select('user_id, users(name, avatar)')
+            .eq('stream_id', currentStream.id)
+            .gte('last_seen', cutoffIso);
+        if (error) throw error;
+        const viewers = data || [];
+        if (viewers.length === 0) {
+            body.innerHTML = '<div class="viewer-list-empty">Aucun viewer actif</div>';
+            return;
+        }
+        body.innerHTML = viewers.map(v => {
+            const name = v.users?.name || 'Utilisateur';
+            const avatar = v.users?.avatar || 'https://placehold.co/64';
+            return `
+                <div class="viewer-list-item">
+                    <img class="viewer-list-avatar" src="${avatar}" alt="${name}">
+                    <div class="viewer-list-name">${name}</div>
+                </div>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('Erreur viewers list:', error);
+        body.innerHTML = '<div class="viewer-list-empty">Impossible de charger la liste</div>';
+    }
+}
+
 // Configurer les médias du diffuseur (Host)
 async function setupBroadcasterMedia(options = {}) {
     try {
         const source = options.source || 'camera';
         let stream = null;
-        const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const isMobile = isMobileDevice();
 
         const requestUserMedia = async (constraints) => {
             try {
@@ -915,11 +1276,22 @@ async function setupBroadcasterMedia(options = {}) {
                 video: {
                     width: { ideal: 1280 },
                     height: { ideal: 720 },
-                    frameRate: { ideal: 30 }
+                    frameRate: { ideal: 30 },
+                    ...(isMobile ? { facingMode: { ideal: 'user' } } : {})
                 },
                 audio: true
             });
         }
+
+        const initialVideoTrack = stream?.getVideoTracks?.()[0];
+        if (initialVideoTrack) {
+            currentVideoDeviceId = initialVideoTrack.getSettings?.().deviceId || currentVideoDeviceId;
+            if (source !== 'screen') {
+                lastCameraDeviceId = currentVideoDeviceId || lastCameraDeviceId;
+            }
+        }
+        isScreenSharing = source === 'screen';
+        updateScreenShareButtonState();
         
         const video = document.getElementById('stream-video');
         if (video) {
@@ -943,50 +1315,6 @@ async function setupBroadcasterMedia(options = {}) {
             const followBtn = document.getElementById('follow-btn');
             if (followBtn) {
                 followBtn.style.display = 'none'; // Le host ne peut pas se suivre lui-même
-            }
-            
-            // Ajouter bouton de fin de stream
-            const actionsContainer = document.querySelector('.stream-actions');
-            if (actionsContainer) {
-                const endBtn = document.createElement('button');
-                endBtn.className = 'stream-action-btn btn';
-                endBtn.style.backgroundColor = '#ef4444';
-                endBtn.style.color = 'white';
-                endBtn.innerHTML = `
-                    <span class="btn-text">Terminer le Live</span>
-                `;
-                endBtn.onclick = async () => {
-                    if (confirm('Voulez-vous vraiment arrêter le live ?')) {
-                        try {
-                            endBtn.disabled = true;
-                            endBtn.style.opacity = '0.7';
-                            const result = await endStream();
-                            if (!result || !result.success) {
-                                const message = result?.error || 'Impossible de terminer le live';
-                                console.error('Fin du live échouée:', message);
-                                if (window.ToastManager) {
-                                    ToastManager.error('Erreur', message);
-                                } else {
-                                    alert(message);
-                                }
-                                endBtn.disabled = false;
-                                endBtn.style.opacity = '';
-                                return;
-                            }
-                            // Arrêter les tracks
-                            stream.getTracks().forEach(track => track.stop());
-                            window.location.href = 'index.html';
-                        } catch (error) {
-                            console.error('Erreur bouton fin de live:', error);
-                            if (window.ToastManager) {
-                                ToastManager.error('Erreur', error?.message || 'Impossible de terminer le live');
-                            }
-                            endBtn.disabled = false;
-                            endBtn.style.opacity = '';
-                        }
-                    }
-                };
-                actionsContainer.prepend(endBtn);
             }
             
             // Activer le son par défaut pour le host
@@ -1033,10 +1361,26 @@ async function initializeStreamPage(streamId) {
     initWebRtcSignaling(streamId, isHost);
     startViewerCountSync(streamId);
 
+    const viewerModal = document.getElementById('viewer-list-modal');
+    const viewerClose = document.getElementById('viewer-list-close');
+    if (viewerClose && !viewerClose.dataset.bound) {
+        viewerClose.addEventListener('click', () => closeViewerListModal());
+        viewerClose.dataset.bound = 'true';
+    }
+    if (viewerModal && !viewerModal.dataset.bound) {
+        viewerModal.addEventListener('click', (event) => {
+            if (event.target === viewerModal) {
+                closeViewerListModal();
+            }
+        });
+        viewerModal.dataset.bound = 'true';
+    }
+
     // Si l'utilisateur actuel est le créateur du stream (Host)
     if (isHost) {
         console.log('Mode Diffuseur activé');
         await setupBroadcasterMedia({ source: window._streamBroadcastSource });
+        setupHostControls();
         setViewerWaiting(false);
     } else {
         setViewerWaiting(true);
@@ -1127,6 +1471,7 @@ function hydrateStreamInfo(stream) {
 function applyStreamRoleUI(isHost) {
     document.body.classList.toggle('is-stream-host', isHost);
     document.body.classList.toggle('is-stream-viewer', !isHost);
+    isStreamHost = isHost;
 
     const status = document.getElementById('stream-status');
     if (status) {
@@ -1138,10 +1483,9 @@ function applyStreamRoleUI(isHost) {
         roleBadge.remove();
     }
 
-    const likeBtn = document.getElementById('like-btn');
     const followBtn = document.getElementById('follow-btn');
     const shareBtn = document.getElementById('share-btn');
-    const buttons = [likeBtn, followBtn, shareBtn].filter(Boolean);
+    const buttons = [followBtn, shareBtn].filter(Boolean);
 
     buttons.forEach(btn => {
         if (isHost) {
@@ -1160,6 +1504,19 @@ function applyStreamRoleUI(isHost) {
     const chatInput = document.getElementById('stream-chat-input');
     if (chatInput) {
         chatInput.placeholder = isHost ? 'Écrire à vos viewers...' : 'Envoyer un message...';
+    }
+
+    const viewerBtn = document.getElementById('viewer-list-btn');
+    if (viewerBtn) {
+        if (isHost) {
+            viewerBtn.disabled = false;
+            if (!viewerBtn.dataset.bound) {
+                viewerBtn.addEventListener('click', () => openViewerListModal());
+                viewerBtn.dataset.bound = 'true';
+            }
+        } else {
+            viewerBtn.disabled = true;
+        }
     }
 }
 
@@ -1213,10 +1570,9 @@ function setViewerWaiting(isWaiting) {
         note.style.display = isWaiting ? 'flex' : 'none';
     }
 
-    const likeBtn = document.getElementById('like-btn');
     const followBtn = document.getElementById('follow-btn');
     const shareBtn = document.getElementById('share-btn');
-    const buttons = [likeBtn, followBtn, shareBtn].filter(Boolean);
+    const buttons = [followBtn, shareBtn].filter(Boolean);
     buttons.forEach(btn => {
         if (isWaiting) {
             btn.disabled = true;
@@ -1238,6 +1594,45 @@ function setViewerWaiting(isWaiting) {
     } else if (status) {
         status.textContent = '🔴 EN DIRECT';
         status.classList.add('live');
+    }
+}
+
+function showStreamEndedMessage() {
+    const container = document.querySelector('.stream-video-container');
+    if (!container) return;
+
+    const waiting = document.getElementById('stream-waiting');
+    if (waiting) waiting.style.display = 'none';
+
+    let ended = document.getElementById('stream-ended');
+    if (!ended) {
+        ended = document.createElement('div');
+        ended.id = 'stream-ended';
+        ended.className = 'stream-waiting stream-ended';
+        ended.innerHTML = `
+            <div class="stream-waiting-card">
+                <div class="stream-waiting-title">Live terminé</div>
+                <div class="stream-waiting-subtitle">L'hôte a arrêté le live.</div>
+            </div>
+        `;
+        container.appendChild(ended);
+    }
+    ended.style.display = 'flex';
+
+    const info = document.querySelector('.stream-info');
+    if (info) {
+        let note = document.getElementById('stream-ended-note');
+        if (!note) {
+            note = document.createElement('div');
+            note.id = 'stream-ended-note';
+            note.className = 'stream-waiting-note stream-ended-note';
+            note.innerHTML = `
+                <strong>Live terminé</strong>
+                <span>L'hôte a arrêté le live.</span>
+            `;
+            info.prepend(note);
+        }
+        note.style.display = 'flex';
     }
 }
 
