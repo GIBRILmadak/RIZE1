@@ -492,19 +492,9 @@ async function getUserEngagementTotals(userId) {
 // Connexion avec Google OAuth
 async function signInWithGoogle() {
     try {
-        const isLocal =
-            window.location.origin === 'null' || window.location.protocol === 'file:';
-        const basePath = window.location.pathname.endsWith('/')
-            ? window.location.pathname
-            : window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
-        const redirectUrl = isLocal
-            ? 'http://localhost:3000/index.html'
-            : window.location.origin + basePath + 'index.html';
         const { data, error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
-            options: {
-                redirectTo: redirectUrl
-            }
+            options: {}
         });
         
         if (error) throw error;
@@ -525,11 +515,8 @@ async function signInWithGoogle() {
 // Réinitialisation du mot de passe
 async function resetPassword(email) {
     try {
-        const basePath = window.location.pathname.endsWith('/')
-            ? window.location.pathname
-            : window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
         const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: window.location.origin + basePath + 'login.html?reset=true'
+            redirectTo: window.location.origin + '/login.html?reset=true'
         });
         
         if (error) throw error;
