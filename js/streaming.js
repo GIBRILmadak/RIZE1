@@ -30,6 +30,21 @@ if (!window.__streamingLoaded) {
     let isMicMuted = false;
     let isScreenSharing = false;
     const renderedChatMessageIds = new Set();
+    const MOBILE_VIDEO_CONSTRAINTS = {
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 540, max: 720 },
+        frameRate: { ideal: 24, max: 30 },
+        facingMode: { ideal: 'user' }
+    };
+
+function isSecureStreamingContext() {
+    return (
+        window.isSecureContext ||
+        location.protocol === 'https:' ||
+        location.hostname === 'localhost' ||
+        location.hostname === '127.0.0.1'
+    );
+}
 
 // Créer une session de streaming
 async function createStreamingSession(streamData) {
@@ -907,8 +922,12 @@ async function startCameraStream(deviceId = null) {
         ? { video: { deviceId: { exact: deviceId } }, audio: false }
         : {
             video: isMobileDevice()
-                ? { facingMode: { ideal: 'user' } }
-                : true,
+                ? { ...MOBILE_VIDEO_CONSTRAINTS }
+                : {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    frameRate: { ideal: 30 }
+                },
             audio: false
         };
     const newStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -1145,6 +1164,15 @@ async function setupBroadcasterMedia(options = {}) {
         const source = options.source || 'camera';
         let stream = null;
         const isMobile = isMobileDevice();
+        if (!isSecureStreamingContext()) {
+            const msg = 'Le live nécessite HTTPS (ou localhost) pour accéder à la caméra/micro sur mobile.';
+            console.warn(msg);
+            if (window.ToastManager) {
+                ToastManager.error('Sécurité requise', msg);
+            } else {
+                alert(msg);
+            }
+        }
 
         const requestUserMedia = async (constraints) => {
             try {
@@ -1274,12 +1302,17 @@ async function setupBroadcasterMedia(options = {}) {
         } else {
             stream = await requestUserMedia({
                 video: {
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    frameRate: { ideal: 30 },
-                    ...(isMobile ? { facingMode: { ideal: 'user' } } : {})
+                    ...(isMobile ? MOBILE_VIDEO_CONSTRAINTS : {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        frameRate: { ideal: 30 }
+                    })
                 },
-                audio: true
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
             });
         }
 

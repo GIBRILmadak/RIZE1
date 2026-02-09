@@ -2116,33 +2116,19 @@ function renderVerificationBadgeById(userId) {
     const user = getUser(userId);
     const badgeValue =
         user && user.badge ? String(user.badge).toLowerCase() : "";
-    const accountType =
-        user && user.account_type
-            ? String(user.account_type).toLowerCase()
-            : "";
-    const accountSubtype =
-        user && user.account_subtype
-            ? String(user.account_subtype).toLowerCase()
-            : "";
     if (
         badgeValue === "staff" ||
         badgeValue === "team" ||
         badgeValue === "community" ||
         badgeValue === "company" ||
-        badgeValue === "enterprise" ||
-        accountType === "community" ||
-        accountType === "enterprise" ||
-        accountSubtype === "community" ||
-        accountSubtype === "enterprise"
+        badgeValue === "enterprise"
     ) {
         return `<img src="icons/verify-com.svg?v=${BADGE_ASSET_VERSION}" alt="Équipe vérifiée" class="verification-badge">`;
     }
     if (
         badgeValue === "creator" ||
         badgeValue === "personal" ||
-        badgeValue === "verified" ||
-        accountType === "personal" ||
-        accountSubtype === "personal"
+        badgeValue === "verified"
     ) {
         return `<img src="icons/verify-personal.svg?v=${BADGE_ASSET_VERSION}" alt="Créateur vérifié" class="verification-badge">`;
     }
@@ -3609,16 +3595,26 @@ function getAllFeedContent() {
 function loadImmersivePrefs() {
     try {
         const raw = localStorage.getItem("immersive_prefs_v1");
-        if (!raw) return { types: {}, states: {}, users: {}, seen: {} };
+        if (!raw)
+            return {
+                types: {},
+                states: {},
+                users: {},
+                tags: {},
+                queries: {},
+                seen: {},
+            };
         const parsed = JSON.parse(raw);
         return {
             types: parsed.types || {},
             states: parsed.states || {},
             users: parsed.users || {},
+            tags: parsed.tags || {},
+            queries: parsed.queries || {},
             seen: parsed.seen || {},
         };
     } catch (e) {
-        return { types: {}, states: {}, users: {}, seen: {} };
+        return { types: {}, states: {}, users: {}, tags: {}, queries: {}, seen: {} };
     }
 }
 
@@ -3664,13 +3660,42 @@ function updateImmersivePrefs(content, action) {
     bumpPref(prefs.types, content.type, weight);
     bumpPref(prefs.states, content.state, weight * 0.6);
     bumpPref(prefs.users, content.userId, weight * 0.9);
+    if (Array.isArray(content.tags)) {
+        content.tags.forEach((tag) => bumpPref(prefs.tags, tag, weight * 0.75));
+    }
     prefs.seen[content.contentId] = Date.now();
     prefs.types = prunePrefsObject(prefs.types, 80);
     prefs.states = prunePrefsObject(prefs.states, 30);
     prefs.users = prunePrefsObject(prefs.users, 120);
+    prefs.tags = prunePrefsObject(prefs.tags, 120);
+    prefs.queries = prunePrefsObject(prefs.queries, 120);
     prefs.seen = pruneSeen(prefs.seen, 600);
     saveImmersivePrefs(prefs);
 }
+
+function extractSearchTokens(query) {
+    if (!query) return [];
+    return query
+        .toLowerCase()
+        .split(/[^a-z0-9À-ÿ]+/i)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 3)
+        .slice(0, 8);
+}
+
+function recordSearchPreference(query) {
+    const tokens = extractSearchTokens(query);
+    if (tokens.length === 0) return;
+    const prefs = loadImmersivePrefs();
+    tokens.forEach((token) => {
+        bumpPref(prefs.tags, token, 0.9);
+        bumpPref(prefs.queries, token, 1.1);
+    });
+    prefs.tags = prunePrefsObject(prefs.tags, 120);
+    prefs.queries = prunePrefsObject(prefs.queries, 120);
+    saveImmersivePrefs(prefs);
+}
+window.recordSearchPreference = recordSearchPreference;
 
 function findContentById(contentId) {
     if (!contentId || typeof userContents === "undefined") return null;
@@ -3714,6 +3739,29 @@ function scoreImmersiveContent(content, context) {
     const typePref = (context.prefs.types[content.type] || 0) * 0.45;
     const statePref = (context.prefs.states[content.state] || 0) * 0.25;
     const userPref = (context.prefs.users[content.userId] || 0) * 0.7;
+    const tagPref = Array.isArray(content.tags)
+        ? content.tags.reduce(
+              (sum, tag) => sum + (context.prefs.tags[tag] || 0) * 0.55,
+              0,
+          )
+        : 0;
+    let queryPref = 0;
+    if (context.topQueries && context.topQueries.length > 0) {
+        const text = `${(content.title || "").toString().toLowerCase()} ${(content.description || "")
+            .toString()
+            .toLowerCase()}`;
+        const tagSet = new Set(
+            Array.isArray(content.tags)
+                ? content.tags.map((t) => t.toLowerCase())
+                : [],
+        );
+        context.topQueries.forEach(({ token, score }) => {
+            if (!token) return;
+            if (text.includes(token) || tagSet.has(token)) {
+                queryPref += score * 0.35;
+            }
+        });
+    }
     const seenPenalty =
         context.prefs.seen && context.prefs.seen[content.contentId] ? 0.8 : 0;
     const base =
@@ -3722,7 +3770,9 @@ function scoreImmersiveContent(content, context) {
         followBoost +
         typePref +
         statePref +
-        userPref -
+        userPref +
+        tagPref +
+        queryPref -
         seenPenalty;
     return base + Math.random() * 0.08;
 }
@@ -3753,9 +3803,18 @@ async function getPersonalizedFeed(contents) {
     const prefs = loadImmersivePrefs();
     const followedSet = await getFollowedUserIdSet();
     const now = Date.now();
+    const topQueries = Object.entries(prefs.queries || {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(([token, score]) => ({ token, score }));
     const scored = contents.map((item) => ({
         item,
-        score: scoreImmersiveContent(item, { prefs, followedSet, now }),
+        score: scoreImmersiveContent(item, {
+            prefs,
+            followedSet,
+            now,
+            topQueries,
+        }),
     }));
     scored.sort((a, b) => b.score - a.score);
     const ranked = scored.map((s) => s.item);

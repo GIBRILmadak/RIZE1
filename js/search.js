@@ -59,6 +59,10 @@ async function performSearch(query) {
         
         if (contentError) throw contentError;
         
+        if (typeof window.recordSearchPreference === 'function') {
+            window.recordSearchPreference(query);
+        }
+
         // Afficher les résultats
         displaySearchResults(users, content, query);
         
