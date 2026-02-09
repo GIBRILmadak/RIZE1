@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oups erreur 404 | RIZE</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        .error-404 {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem 1.5rem;
+            background: radial-gradient(circle at top, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.9));
+        }
+
+        .error-404__card {
+            width: min(920px, 100%);
+            background: rgba(18, 18, 18, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 24px;
+            padding: clamp(1.5rem, 3vw, 2.5rem);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+            text-align: center;
+        }
+
+        .error-404__title {
+            font-family: var(--font-heading);
+            font-size: clamp(1.6rem, 2.5vw, 2.4rem);
+            margin-bottom: 1.5rem;
+            letter-spacing: 0.02em;
+        }
+
+        .error-404__video {
+            width: 100%;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            display: block;
+            background: #000;
+        }
+
+        .error-404__action {
+            margin-top: 1.8rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.85rem 1.5rem;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #050505;
+            font-weight: 600;
+            text-decoration: none;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .error-404__action:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 25px rgba(255, 255, 255, 0.15);
+        }
+    </style>
+</head>
+<body>
+    <main class="error-404">
+        <section class="error-404__card" aria-label="Erreur 404">
+            <h1 class="error-404__title">Oups erreur 404</h1>
+            <video class="error-404__video" autoplay muted loop playsinline>
+                <source src="./icons/404.mp4" type="video/mp4">
+                Votre navigateur ne prend pas en charge la lecture vidéo.
+            </video>
+            <a class="error-404__action" href="./index.html">Retour à l'accueil</a>
+        </section>
+    </main>
+</body>
+</html>
