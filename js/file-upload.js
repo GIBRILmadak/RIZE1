@@ -10,6 +10,9 @@ const ALLOWED_IMAGE_TYPES = [
 ];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 const MAX_FILE_SIZE = Number.POSITIVE_INFINITY; // no client-side limit
+// Passer en upload résumable pour les gros fichiers (ex: vidéos iPhone)
+const RESUMABLE_THRESHOLD_BYTES = 45 * 1024 * 1024; // 45 Mo ~ limite CDN courante
+const RESUMABLE_CHUNK_SIZE_BYTES = 8 * 1024 * 1024; // 8 Mo par chunk
 
 // Uploader un fichier vers Supabase Storage
 function isGifFile(file) {
@@ -21,7 +24,7 @@ function isGifFile(file) {
     return false;
 }
 
-async function uploadFile(file, folder = "content") {
+async function uploadFile(file, folder = "content", onProgress) {
     try {
         // Validation du type de fichier
         const isGif = isGifFile(file);
@@ -48,14 +51,68 @@ async function uploadFile(file, folder = "content") {
         const fileExt = file.name.split(".").pop();
         const fileName = `${window.currentUser.id}/${folder}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
 
-        // Uploader vers Supabase Storage
-        const { data, error } = await supabase.storage
-            .from("media")
-            .upload(fileName, file, {
-                cacheControl: isGif ? "0" : "3600",
-                contentType: file.type || undefined,
-                upsert: false,
-            });
+        const supportsResumable =
+            typeof supabase?.storage?.from("media")?.uploadResumable ===
+            "function";
+        const useResumable =
+            supportsResumable &&
+            (file.size >= RESUMABLE_THRESHOLD_BYTES || isVideo);
+
+        const baseFileOptions = {
+            cacheControl: isGif ? "0" : "3600",
+            contentType: file.type || undefined,
+            upsert: false,
+        };
+
+        const notifyProgress = (progressEvent) => {
+            if (!progressEvent) return;
+
+            // Gestion de plusieurs formats possibles d'évènement de progression
+            const uploadedBytes =
+                progressEvent.bytesUploaded ||
+                progressEvent.uploadedBytes ||
+                progressEvent.loaded ||
+                0;
+            const totalBytes =
+                progressEvent.bytesTotal ||
+                progressEvent.totalBytes ||
+                progressEvent.total ||
+                file.size;
+
+            if (!totalBytes || !uploadedBytes) return;
+            const percent = Math.min(
+                100,
+                Math.round((uploadedBytes / totalBytes) * 100),
+            );
+
+            if (typeof onProgress === "function") {
+                onProgress(percent);
+            } else if (typeof showUploadProgress === "function") {
+                showUploadProgress(uploadedBytes, totalBytes);
+            }
+        };
+
+        let uploadResponse;
+
+        if (useResumable) {
+            uploadResponse = await supabase.storage
+                .from("media")
+                .uploadResumable(
+                    fileName,
+                    file,
+                    baseFileOptions,
+                    {
+                        chunkSize: RESUMABLE_CHUNK_SIZE_BYTES,
+                        onUploadProgress: notifyProgress,
+                    },
+                );
+        } else {
+            uploadResponse = await supabase.storage
+                .from("media")
+                .upload(fileName, file, baseFileOptions);
+        }
+
+        const { data, error } = uploadResponse || {};
 
         if (error) {
             console.error("Erreur détaillée upload:", error);

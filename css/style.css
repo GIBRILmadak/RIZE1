@@ -885,6 +885,28 @@ nav {
 .timeline-card h4 { margin-bottom: 0.35rem; font-size: 0.95rem; }
 .timeline-card p { color: var(--text-secondary); font-size: 0.85rem; }
 
+/* Limiter les débordements des titres et descriptions longues */
+.timeline-card h4,
+.timeline-item-latest .timeline-card h4 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+}
+
+.timeline-card p,
+.timeline-item-latest .timeline-card p {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+    line-height: 1.4;
+}
+
 .timeline-media {
     margin-top: 0.75rem;
 }
