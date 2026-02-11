@@ -603,6 +603,15 @@ function createPeerConnection(peerId, isHostSide) {
                     playPromise.catch(() => {});
                 }
             }
+            const hasAudio = remoteStream.getAudioTracks().length > 0;
+            if (hasAudio) {
+                showUnmuteOverlay();
+            } else if (window.ToastManager) {
+                ToastManager.info(
+                    'Audio du live',
+                    'Aucune piste audio reçue. Vérifiez que l’hôte partage bien le micro ou l’audio de l’écran.'
+                );
+            }
             setViewerWaiting(false);
         };
     }
@@ -788,11 +797,14 @@ function startViewerHeartbeat(streamId) {
         try {
             await supabase
                 .from('stream_viewers')
-                .upsert({
-                    stream_id: streamId,
-                    user_id: currentUser.id,
-                    last_seen: new Date().toISOString()
-                });
+                .upsert(
+                    {
+                        stream_id: streamId,
+                        user_id: currentUser.id,
+                        last_seen: new Date().toISOString()
+                    },
+                    { onConflict: 'stream_id,user_id' } // sinon le heartbeat échoue sur la contrainte UNIQUE et n'actualise plus last_seen
+                );
         } catch (error) {
             console.error('Erreur heartbeat:', error);
         }
@@ -878,10 +890,37 @@ function toggleAudio() {
     video.muted = !video.muted;
     syncAudioButtonState(video.muted);
     if (!video.muted) {
+        hideUnmuteOverlay();
         const playPromise = video.play();
         if (playPromise && typeof playPromise.catch === 'function') {
             playPromise.catch(() => {});
         }
+    }
+}
+
+function showUnmuteOverlay() {
+    const overlay = document.getElementById('unmute-overlay');
+    const video = document.getElementById('stream-video');
+    if (!overlay || !video) return;
+    if (video.muted) {
+        overlay.style.display = 'flex';
+    }
+}
+
+function hideUnmuteOverlay() {
+    const overlay = document.getElementById('unmute-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+function enableStreamAudio() {
+    const video = document.getElementById('stream-video');
+    if (!video) return;
+    video.muted = false;
+    syncAudioButtonState(false);
+    hideUnmuteOverlay();
+    const playPromise = video.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {});
     }
 }
 
@@ -1393,6 +1432,16 @@ async function initializeStreamPage(streamId) {
     applyStreamRoleUI(isHost);
     initWebRtcSignaling(streamId, isHost);
     startViewerCountSync(streamId);
+    const container = document.querySelector('.stream-video-container');
+    if (container && !container.dataset.boundAudio) {
+        container.dataset.boundAudio = 'true';
+        container.addEventListener('click', () => {
+            const overlay = document.getElementById('unmute-overlay');
+            if (overlay && overlay.style.display === 'flex') {
+                enableStreamAudio();
+            }
+        });
+    }
 
     const viewerModal = document.getElementById('viewer-list-modal');
     const viewerClose = document.getElementById('viewer-list-close');
@@ -1676,6 +1725,7 @@ function showStreamEndedMessage() {
     window.leaveStream = leaveStream;
     window.initializeStreamPage = initializeStreamPage;
     window.toggleAudio = toggleAudio;
+    window.enableStreamAudio = enableStreamAudio;
 } else {
     console.warn('streaming.js déjà chargé, initialisation ignorée.');
 }

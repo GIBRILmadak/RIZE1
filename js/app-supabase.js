@@ -96,6 +96,25 @@ async function shareProfileLink(userId) {
 
 window.shareProfileLink = shareProfileLink;
 
+function injectVerificationNavButton() {
+    try {
+        // Bouton uniquement sur la page profil (profile.html)
+        if (!isProfileOnlyPage()) return;
+        const navLinks = document.querySelector("nav .nav-links");
+        if (!navLinks || navLinks.querySelector(".nav-verify-btn")) return;
+        const btn = document.createElement("a");
+        btn.href = "verification.html";
+        btn.className = "nav-verify-btn";
+        btn.innerHTML = `
+            Obtenir une vérification
+            <img src="icons/verify-personal.svg?v=${BADGE_ASSET_VERSION}" alt="Badge" class="nav-verify-icon">
+        `;
+        navLinks.appendChild(btn);
+    } catch (error) {
+        console.warn("Nav verification CTA not injected:", error);
+    }
+}
+
 /* ========================================
    COLLABORATIONS D'ARC
    ======================================== */
@@ -522,6 +541,8 @@ async function initializeApp() {
             window.location.href = "login.html";
             return;
         }
+
+        injectVerificationNavButton();
 
         if (user) {
             window.currentUser = user;
@@ -2984,6 +3005,9 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
         ? getReplyCount(latestContent.contentId)
         : 0;
 
+    const isVerifiedUser =
+        isVerifiedCreatorUserId(userId) || isVerifiedStaffUserId(userId);
+
     const isTextContent =
         latestContent &&
         (!latestContent.mediaUrl || latestContent.type === "text");
@@ -3005,7 +3029,9 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
     const cardClass =
         latestContent && latestContent.mediaUrl
             ? `user-card has-media ${latestContent.type}`
-            : `user-card ${isTextContent ? "text-card" : ""}`;
+            : `user-card ${isTextContent ? "text-card" : ""}${
+                  isVerifiedUser ? " verified-card" : ""
+              }`;
 
     // Ajout information ARC
     let arcInfo = "";
@@ -3147,7 +3173,6 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
                 </div>
                 
                 ${textHtml}
-                
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     ${badgesHtml}
                     <button class="${courageClass}" data-content-id="${latestContent.contentId}" onclick="event.stopPropagation(); toggleCourage('${latestContent.contentId}', this)">
@@ -3203,7 +3228,7 @@ async function getLiveStreamsForDiscover() {
             hostLastSeenMap.set(row.stream_id, row.last_seen);
         });
 
-        return streams.filter((stream) => {
+        const filtered = streams.filter((stream) => {
             const lastSeen = hostLastSeenMap.get(stream.id);
             if (lastSeen) {
                 return new Date(lastSeen).getTime() >= cutoff;
@@ -3216,6 +3241,27 @@ async function getLiveStreamsForDiscover() {
             }
             return true;
         });
+
+        // Priorité aux hôtes vérifiés, puis nombre de viewers, puis récence
+        filtered.sort((a, b) => {
+            const aVerified =
+                isVerifiedCreatorUserId(a.user_id) ||
+                isVerifiedStaffUserId(a.user_id);
+            const bVerified =
+                isVerifiedCreatorUserId(b.user_id) ||
+                isVerifiedStaffUserId(b.user_id);
+            if (aVerified !== bVerified) return aVerified ? -1 : 1;
+
+            const viewersDiff =
+                (b.viewer_count || 0) - (a.viewer_count || 0);
+            if (viewersDiff !== 0) return viewersDiff;
+
+            const aStart = a.started_at ? new Date(a.started_at).getTime() : 0;
+            const bStart = b.started_at ? new Date(b.started_at).getTime() : 0;
+            return bStart - aStart;
+        });
+
+        return filtered;
     } catch (error) {
         console.error("Erreur récupération lives:", error);
         return [];
@@ -3246,6 +3292,32 @@ function renderLiveStreamCard(stream) {
                 color: white;
                 font-weight: 600;
             }
+            .card-meta {
+                display: flex;
+                gap: 8px;
+                margin: 0.35rem 0 0.5rem;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            .pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 6px 10px;
+                border-radius: 999px;
+                font-size: 0.8rem;
+                font-weight: 600;
+                background: rgba(239, 68, 68, 0.12);
+                color: #ef4444;
+            }
+            .pill svg {
+                width: 16px;
+                height: 16px;
+            }
+            .pill.verified {
+                background: rgba(14, 165, 233, 0.14);
+                color: #0ea5e9;
+            }
             </style>
         `;
         document.head.insertAdjacentHTML(
@@ -3261,11 +3333,23 @@ function renderLiveStreamCard(stream) {
     const description = stream.description || "Rejoignez le live en cours";
     const viewers = stream.viewer_count || 0;
     const thumbnail = stream.thumbnail_url || "";
+    const isVerifiedHost =
+        (hostId && isVerifiedCreatorUserId(hostId)) ||
+        (hostId && isVerifiedStaffUserId(hostId));
 
     const hostNameHtml =
         hostId && typeof window.renderUsernameWithBadge === "function"
             ? window.renderUsernameWithBadge(hostName, hostId)
             : hostName;
+
+    const viewerPill = `
+        <div class="card-meta">
+            <span class="pill">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                ${viewers} en direct
+            </span>
+        </div>
+    `;
 
     const mediaHtml = thumbnail
         ? `
@@ -3301,6 +3385,7 @@ function renderLiveStreamCard(stream) {
                 <div class="card-status" style="border-color: #ef444420; color: #ef4444;">
                     🔴 En direct • ${title}
                 </div>
+                ${viewerPill}
                 <div style="font-size: 0.85rem; color: var(--text-secondary);">${description}</div>
                 <div class="card-user-bottom" style="display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.05);">
                     <img src="${hostAvatar}" class="card-avatar" style="width: 32px; height: 32px;" loading="lazy" decoding="async">
@@ -3419,8 +3504,14 @@ async function renderDiscoverGrid() {
     const currentFilter = window.discoverFilter || "all";
     let cardsHTML = "";
 
-    // Sort users by their latest content date (newest first)
+    // Prioriser les comptes vérifiés, puis récence du contenu
     usersToDisplay.sort((a, b) => {
+        const aVerified =
+            isVerifiedCreatorUserId(a.id) || isVerifiedStaffUserId(a.id);
+        const bVerified =
+            isVerifiedCreatorUserId(b.id) || isVerifiedStaffUserId(b.id);
+        if (aVerified !== bVerified) return aVerified ? -1 : 1;
+
         const aLatest = getLatestContent(a.id);
         const bLatest = getLatestContent(b.id);
         const aTime =
@@ -4830,8 +4921,7 @@ async function renderProfileTimeline(userId) {
     `
         : "";
 
-    const shareButtonHtml = `
-        <button class="btn-share-profile" onclick="shareProfileLink('${userId}')" title="Partager le profil" aria-label="Partager le profil">
+    const shareButtonHtml = `  <button class="btn-share-profile" onclick="shareProfileLink('${userId}')" title="Partager le profil" aria-label="Partager le profil">
             <img src="icons/share.svg" alt="Partager">
         </button>
     `;
@@ -5663,29 +5753,15 @@ async function openSettings(userId) {
           ? `<div class="verification-status verified">Utilisateur vérifié</div>`
           : "";
 
-    const creatorRequestHtml =
-        !isCreatorVerified && !isEnterprise
-            ? `
-        ${
-            creatorRequestPending
-                ? `<div class="verification-status pending">Demande envoyée</div>`
-                : isCreatorEligible
-                  ? `<button type="button" class="btn-verify" onclick="requestVerification('creator')">Demander vérification</button>`
-                  : `<div class="verification-status disabled">Disponible à 1000 abonnés (actuel: ${followerCount})</div>`
-        }
-    `
-            : "";
-
-    const staffRequestHtml =
-        !isStaffVerified && isEnterprise
-            ? `
-        ${
-            staffRequestPending
-                ? `<div class="verification-status pending">Demande envoyée</div>`
-                : `<button type="button" class="btn-verify" onclick="requestVerification('staff')">Demander vérification équipe</button>`
-        }
-    `
-            : "";
+    const verificationCtaHtml = `
+        <div class="verification-status info">
+            Les demandes se font désormais sur la page Vérification.
+        </div>
+        <button type="button" class="btn-verify" onclick="window.location.href='verification.html'">
+            Obtenir une vérification
+            <img src="icons/verify-personal.svg?v=${BADGE_ASSET_VERSION}" alt="Badge" style="width:18px;height:18px;margin-left:8px;">
+        </button>
+    `;
 
     const adminRequestsHtml = pendingRequests.length
         ? pendingRequests
@@ -5832,8 +5908,7 @@ async function openSettings(userId) {
                 <h3>Vérification</h3>
                 <div class="verification-section">
                     ${verificationStatusHtml}
-                    ${creatorRequestHtml}
-                    ${staffRequestHtml}
+                    ${verificationCtaHtml}
                 </div>
 
                 <details class="settings-collapsible" open>

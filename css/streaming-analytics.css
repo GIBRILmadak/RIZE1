@@ -116,6 +116,34 @@
     z-index: 2;
 }
 
+.unmute-overlay {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-weight: 700;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    transition: transform 0.2s ease, opacity 0.2s ease;
+    z-index: 4;
+}
+.unmute-overlay:hover {
+    transform: translateY(-1px);
+    opacity: 0.95;
+}
+.unmute-overlay:active {
+    transform: translateY(0);
+    opacity: 1;
+}
+
 .stream-status.live {
     color: #ef4444;
 }

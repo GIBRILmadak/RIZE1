@@ -268,6 +268,35 @@ nav {
 
 .nav-links a:hover { color: var(--text-primary); }
 
+.nav-verify-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0.55rem 0.9rem;
+    border-radius: 999px;
+    background: linear-gradient(120deg, rgba(14,165,233,0.16), rgba(79,70,229,0.18));
+    color: var(--text-primary);
+    font-weight: 700;
+    font-size: 0.85rem;
+    border: 1px solid rgba(14,165,233,0.35);
+    box-shadow: 0 6px 20px rgba(14,165,233,0.18);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.nav-verify-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(14,165,233,0.24);
+    text-decoration: none;
+}
+
+.nav-verify-btn:active { transform: translateY(0); }
+
+.nav-verify-icon {
+    width: 18px;
+    height: 18px;
+    filter: drop-shadow(0 0 4px rgba(14,165,233,0.5));
+}
+
 /* --- PAGES --- */
 .page {
     display: none;
@@ -315,6 +344,40 @@ nav {
     display: flex;
     flex-direction: column;
     gap: 0.8rem;
+}
+
+.user-card.verified-card {
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.28), 0 10px 30px rgba(0,0,0,0.25);
+}
+
+.card-meta {
+    display: flex;
+    gap: 8px;
+    margin: 0.35rem 0 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+}
+
+.pill svg {
+    width: 16px;
+    height: 16px;
+}
+
+.pill.verified {
+    background: rgba(14, 165, 233, 0.14);
+    color: #0ea5e9;
 }
 
 .user-card:hover {

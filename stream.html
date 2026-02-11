@@ -49,6 +49,15 @@
                         playsinline
                         muted
                     ></video>
+                    <button
+                        id="unmute-overlay"
+                        type="button"
+                        class="unmute-overlay"
+                        onclick="window.enableStreamAudio && window.enableStreamAudio()"
+                        aria-label="Activer le son"
+                    >
+                        🔊 Activer le son
+                    </button>
                     <div class="stream-overlay">
                         <div id="stream-status" class="stream-status live">
                             🔴 EN DIRECT
