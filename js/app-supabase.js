@@ -2062,7 +2062,7 @@ async function fetchVerificationRequests() {
     try {
         const { data, error } = await supabase
             .from("verification_requests")
-            .select("id, user_id, type, status, created_at")
+            .select("id, user_id, type, status, created_at, users(id, name, avatar)")
             .eq("status", "pending")
             .order("created_at", { ascending: false });
 
@@ -2203,6 +2203,16 @@ function maybeShowAmbassadorWelcome(userId) {
 async function requestVerification(type) {
     if (!window.currentUser || !window.ToastManager) return;
     const userId = window.currentUser.id;
+    window._verificationRequestLocks =
+        window._verificationRequestLocks || new Set();
+    if (window._verificationRequestLocks.has(type)) {
+        ToastManager.info(
+            "Demande en cours",
+            "Nous traitons déjà votre demande de vérification.",
+        );
+        return;
+    }
+
     const pendingTypes = await fetchUserPendingRequests(userId);
     if (pendingTypes.has(type)) {
         ToastManager.info(
@@ -2211,6 +2221,23 @@ async function requestVerification(type) {
         );
         return;
     }
+
+    window._verificationRequestLocks.add(type);
+    const disableButtons = (state) => {
+        const btn = document.getElementById(`btn-verify-${type}`);
+        if (btn) {
+            btn.disabled = state;
+            btn.classList.toggle("is-pending", state);
+        }
+        const generic = document.querySelector(
+            `.btn-verify[data-type="${type}"]`,
+        );
+        if (generic) {
+            generic.disabled = state;
+            generic.classList.toggle("is-pending", state);
+        }
+    };
+    disableButtons(true);
 
     try {
         const { error } = await supabase.from("verification_requests").insert({
@@ -2230,6 +2257,9 @@ async function requestVerification(type) {
             "Erreur",
             error?.message || "Impossible d'envoyer la demande.",
         );
+        window._verificationRequestLocks.delete(type);
+        disableButtons(false);
+        return;
     }
 
     if (
@@ -2237,6 +2267,9 @@ async function requestVerification(type) {
     ) {
         openSettings(userId);
     }
+
+    // Rester verrouillé (une seule demande) tant que l'admin n'a pas répondu
+    // Rien à faire ici : le lock reste en mémoire jusqu'au refresh.
 }
 
 async function addVerifiedUserId(type, userId) {
@@ -5780,7 +5813,15 @@ async function openSettings(userId) {
     const adminRequestsHtml = pendingRequests.length
         ? pendingRequests
               .map((req) => {
-                  const reqUser = getUser(req.userId);
+                  const reqUser =
+                      getUser(req.userId) ||
+                      (req.users
+                          ? {
+                                id: req.users.id,
+                                name: req.users.name,
+                                avatar: req.users.avatar,
+                            }
+                          : null);
                   const label =
                       req.type === "staff" ? "Équipe/Entreprise" : "Créateur";
                   const avatar = reqUser?.avatar || "https://placehold.co/40";

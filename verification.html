@@ -133,8 +133,23 @@
                 : `Pré-requis créateur : 1000 followers (actuel : ${followerCount}). Vous pouvez tout de même soumettre la demande.`;
             document.getElementById('eligibility-text').textContent = eligibility;
 
-            document.getElementById('btn-verify-creator').onclick = () => requestVerification('creator');
-            document.getElementById('btn-verify-staff').onclick = () => requestVerification('staff');
+            const pending = await fetchUserPendingRequests(user.id);
+            const btnCreator = document.getElementById('btn-verify-creator');
+            const btnStaff = document.getElementById('btn-verify-staff');
+
+            if (pending.has('creator')) {
+                btnCreator.disabled = true;
+                btnCreator.textContent = 'Demande créateur en attente';
+            } else {
+                btnCreator.onclick = () => requestVerification('creator');
+            }
+
+            if (pending.has('staff')) {
+                btnStaff.disabled = true;
+                btnStaff.textContent = 'Demande équipe en attente';
+            } else {
+                btnStaff.onclick = () => requestVerification('staff');
+            }
         });
     </script>
 </body>
