@@ -849,6 +849,47 @@ nav {
     margin-bottom: 4rem;
 }
 
+.profile-verify-block {
+    margin: 0.75rem auto 0;
+    padding: 12px 14px;
+    border: 1px solid rgba(14,165,233,0.28);
+    border-radius: 14px;
+    background: rgba(14,165,233,0.08);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.profile-verify-block .verify-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+.profile-verify-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    border-radius: 12px;
+    padding: 0.65rem 0.95rem;
+    background: linear-gradient(135deg, #0ea5e9, #6366f1);
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 10px 24px rgba(99,102,241,0.3);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.profile-verify-cta img { width: 18px; height: 18px; }
+.profile-verify-cta:hover { transform: translateY(-1px); box-shadow: 0 12px 30px rgba(99,102,241,0.35); }
+.profile-verify-cta:active { transform: translateY(0); }
+
 .profile-banner {
     width: 100%;
     height: 300px;

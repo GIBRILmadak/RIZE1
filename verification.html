@@ -127,8 +127,6 @@
                 return;
             }
 
-            injectVerificationNavButton();
-
             const followerCount = await getFollowerCount(user.id);
             const eligibility = followerCount >= 1000
                 ? 'Éligible : vous avez assez de followers pour la vérification créateur.'

@@ -542,8 +542,6 @@ async function initializeApp() {
             return;
         }
 
-        injectVerificationNavButton();
-
         if (user) {
             window.currentUser = user;
             window.currentUserId = user.id;
@@ -4957,6 +4955,21 @@ async function renderProfileTimeline(userId) {
     const followerCount = await getFollowerCount(userId);
     const followingCount = await getFollowingCount(userId);
     const engagementTotals = await getUserEngagementTotals(userId);
+    const showVerificationCta = isOwnProfile && !isCurrentUserVerified();
+    const verificationCtaHtml = showVerificationCta
+        ? `
+        <div class="profile-verify-block">
+            <div class="verify-copy">
+                <strong>Envie du badge vérifié ?</strong>
+                <span>Pré-requis créateur : 1000 abonnés (actuel : ${followerCount}).</span>
+            </div>
+            <button class="profile-verify-cta" onclick="window.location.href='verification.html'">
+                Obtenir une vérification
+                <img src="icons/verify-personal.svg?v=${BADGE_ASSET_VERSION}" alt="Badge" />
+            </button>
+        </div>
+        `
+        : "";
     const accountTypeValue = String(user.account_type || "").toLowerCase();
     const accountSubtypeValue = String(user.account_subtype || user.accountSubtype || "").toLowerCase();
     const isCommunityAccount =
@@ -5382,6 +5395,7 @@ async function renderProfileTimeline(userId) {
                     </div>
                 </div>
                 ${engagementStatsHtml}
+                ${verificationCtaHtml}
                 <div class="profile-actions" style="margin-top:6px; display:flex; gap:8px; align-items:center;"> 
                     <button class="btn-add" onclick="openCreateMenu('${userId}')" title="Ajouter une trace">
                         <img src="icons/plus.svg" alt="Ajouter" style="width:18px;height:18px">
