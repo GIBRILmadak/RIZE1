@@ -241,6 +241,32 @@ async function getAllUsers() {
    FONCTIONS BASE DE DONNÉES - CONTENT
    ======================================== */
 
+function getContentWriteErrorMessage(error, contentData = {}) {
+    const rawMessage = String(error?.message || '').trim();
+    const lowerMessage = rawMessage.toLowerCase();
+    const contentType = String(contentData?.type || '').toLowerCase();
+
+    const isTypeConstraint =
+        lowerMessage.includes('content_type_check') ||
+        (lowerMessage.includes('check constraint') &&
+            lowerMessage.includes('type'));
+
+    if (isTypeConstraint && contentType === 'live') {
+        return "Le type 'live' n'est pas activé dans la base. Exécutez le script sql/content-live-type-fix.sql dans Supabase SQL Editor.";
+    }
+
+    const isMissingArcColumn =
+        lowerMessage.includes('arc_id') &&
+        (lowerMessage.includes('column') || lowerMessage.includes('colonne')) &&
+        (lowerMessage.includes('does not exist') || lowerMessage.includes('n\'existe pas'));
+
+    if (isMissingArcColumn) {
+        return "La colonne 'arc_id' est manquante sur la table content. Exécutez sql/arcs-schema.sql.";
+    }
+
+    return rawMessage || 'Erreur inconnue lors de l\'écriture du contenu.';
+}
+
 // Créer un nouveau contenu
 async function createContent(contentData) {
     const { data, error } = await supabase
@@ -261,7 +287,10 @@ async function createContent(contentData) {
     
     if (error) {
         console.error('Erreur création contenu:', error);
-        return { success: false, error: error.message };
+        return {
+            success: false,
+            error: getContentWriteErrorMessage(error, contentData),
+        };
     }
     
     return { success: true, data: data };
@@ -288,7 +317,10 @@ async function updateContent(contentId, contentData) {
     
     if (error) {
         console.error('Erreur mise à jour contenu:', error);
-        return { success: false, error: error.message };
+        return {
+            success: false,
+            error: getContentWriteErrorMessage(error, contentData),
+        };
     }
     
     return { success: true, data: data };

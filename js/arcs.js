@@ -380,6 +380,7 @@ async function handleCreateArc(e) {
 
     try {
         let error;
+        let createdArc = null;
         
         if (arcId) {
             // Update
@@ -390,13 +391,43 @@ async function handleCreateArc(e) {
             error = updateError;
         } else {
             // Create
-            const { error: insertError } = await supabase
+            const { data: insertedArc, error: insertError } = await supabase
                 .from('arcs')
-                .insert([arcData]);
+                .insert([arcData])
+                .select('id')
+                .single();
+            createdArc = insertedArc || null;
             error = insertError;
         }
 
         if (error) throw error;
+
+        const pendingPayload = window.pendingCreatePostAfterArc;
+        const pendingIsFresh =
+            pendingPayload &&
+            (!pendingPayload.createdAt ||
+                Date.now() - pendingPayload.createdAt < 15 * 60 * 1000);
+        const pendingCreatePost =
+            !arcId &&
+            createdArc &&
+            createdArc.id &&
+            pendingPayload &&
+            pendingPayload.userId === currentUser.id &&
+            pendingIsFresh;
+
+        if (pendingCreatePost && typeof window.openCreateMenu === 'function') {
+            if (typeof window.clearPendingCreatePostAfterArc === 'function') {
+                window.clearPendingCreatePostAfterArc();
+            } else {
+                window.pendingCreatePostAfterArc = null;
+            }
+            closeCreateModal();
+            e.target.reset();
+            setTimeout(() => {
+                window.openCreateMenu(currentUser.id, createdArc.id);
+            }, 120);
+            return;
+        }
 
         alert(arcId ? "ARC mis à jour avec succès !" : "ARC créé avec succès !");
         closeCreateModal();

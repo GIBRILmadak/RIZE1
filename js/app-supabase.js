@@ -15,6 +15,8 @@ window.hasLoadedUsers = false;
 window.userLoadError = null;
 window.arcCollaboratorsCache = new Map();
 window.arcCollaboratorsPending = new Set();
+window.pendingCreatePostAfterArc = null;
+let firstPostOnboardingHandled = false;
 
 function isMobileDevice() {
     return window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
@@ -588,6 +590,7 @@ async function initializeApp() {
         }
 
         handleLoginPromptContext();
+        await maybeStartFirstPostFlow();
         clearTimeout(safetyTimeout);
     } catch (error) {
         console.error("Initialization error:", error);
@@ -1160,6 +1163,70 @@ function getLatestContent(userId) {
     return contents.length > 0 ? contents[0] : null;
 }
 
+function hasUserPublishedContent(userId) {
+    if (!userId) return false;
+    return getUserContentLocal(userId).length > 0;
+}
+
+function setPendingCreatePostAfterArc(userId, options = {}) {
+    if (!userId) return;
+    window.pendingCreatePostAfterArc = {
+        userId,
+        reason: options.reason || "arc-required",
+        createdAt: Date.now(),
+    };
+}
+
+function clearPendingCreatePostAfterArc() {
+    window.pendingCreatePostAfterArc = null;
+}
+
+async function maybeStartFirstPostFlow() {
+    if (!window.currentUser || firstPostOnboardingHandled) return;
+    if (!document.getElementById("create-modal")) return;
+    firstPostOnboardingHandled = true;
+
+    const userId = window.currentUser.id;
+    if (hasUserPublishedContent(userId)) return;
+
+    let firstArcId = null;
+    try {
+        const { data, error } = await supabase
+            .from("arcs")
+            .select("id")
+            .eq("user_id", userId)
+            .eq("status", "in_progress")
+            .order("created_at", { ascending: true })
+            .limit(1);
+        if (error) throw error;
+        firstArcId = data && data[0] ? data[0].id : null;
+    } catch (error) {
+        console.error("Erreur vérification ARC pour onboarding:", error);
+    }
+
+    if (firstArcId) {
+        const shouldOpenCreate =
+            confirm(
+                "Bienvenue sur RIZE. Voulez-vous publier votre première trace maintenant ?",
+            ) === true;
+        if (shouldOpenCreate) {
+            openCreateMenu(userId, firstArcId);
+        }
+        return;
+    }
+
+    const shouldStartArc =
+        confirm(
+            "Bienvenue sur RIZE. Pour publier votre première trace, commencez par créer votre premier ARC. Lancer la création maintenant ?",
+        ) === true;
+    if (!shouldStartArc) return;
+
+    setPendingCreatePostAfterArc(userId, { reason: "first-post-onboarding" });
+    if (typeof window.openCreateModal === "function") {
+        window.openCreateModal();
+    }
+}
+
 // Récupérer l'état dominant
 function getDominantState(userId) {
     const contents = getUserContentLocal(userId);
@@ -1646,6 +1713,13 @@ async function fetchVerifiedBadges() {
     }
 }
 
+function getVerifiedBadgeSets() {
+    return {
+        creators: new Set(verifiedCreatorUserIds || []),
+        staff: new Set(verifiedStaffUserIds || []),
+    };
+}
+
 function escapeHtml(value) {
     if (value === null || value === undefined) return "";
     return String(value)
@@ -1954,61 +2028,7 @@ function getSuperAdminPanelHtml() {
     return `
         <div class="settings-section">
             <h3>Super admin</h3>
-            <p style="color: var(--text-secondary); margin-bottom: 1rem;">Accès total : modération, suppression et annonces officielles.</p>
-
-            <div class="verification-admin-block">
-                <h4>Ban utilisateur (temporaire)</h4>
-                <div class="verification-input-row">
-                    <input type="text" id="admin-ban-user-id" class="form-input" placeholder="ID utilisateur">
-                    <input type="number" id="admin-ban-duration" class="form-input" placeholder="Durée" min="1" value="24">
-                    <select id="admin-ban-unit" class="form-input">
-                        <option value="hours">heures</option>
-                        <option value="days">jours</option>
-                    </select>
-                    <button type="button" class="btn-verify" onclick="
-                        const uid = document.getElementById('admin-ban-user-id').value;
-                        const value = parseInt(document.getElementById('admin-ban-duration').value, 10) || 1;
-                        const unit = document.getElementById('admin-ban-unit').value;
-                        const hours = unit === 'days' ? value * 24 : value;
-                        const reason = document.getElementById('admin-ban-reason').value;
-                        banUserByAdmin(uid, hours, reason);
-                    ">Bannir</button>
-                </div>
-                <div class="verification-input-row">
-                    <input type="text" id="admin-ban-reason" class="form-input" placeholder="Raison (optionnel)">
-                    <button type="button" class="btn-cancel" onclick="
-                        const uid = document.getElementById('admin-ban-user-id').value;
-                        unbanUserByAdmin(uid);
-                    ">Lever le ban</button>
-                    <button type="button" class="btn-cancel" onclick="
-                        const uid = document.getElementById('admin-ban-user-id').value;
-                        hardDeleteUserByAdmin(uid);
-                    ">Supprimer utilisateur</button>
-                </div>
-            </div>
-
-            <div class="verification-admin-block" style="margin-top: 1.5rem;">
-                <h4>Modération contenu</h4>
-                <div class="verification-input-row">
-                    <input type="text" id="admin-content-id" class="form-input" placeholder="ID contenu">
-                    <input type="text" id="admin-content-reason" class="form-input" placeholder="Raison (optionnel)">
-                    <button type="button" class="btn-verify" onclick="
-                        const cid = document.getElementById('admin-content-id').value;
-                        const reason = document.getElementById('admin-content-reason').value;
-                        softDeleteContentByAdmin(cid, reason);
-                    ">Masquer</button>
-                </div>
-                <div class="verification-input-row">
-                    <button type="button" class="btn-cancel" onclick="
-                        const cid = document.getElementById('admin-content-id').value;
-                        restoreContentByAdmin(cid);
-                    ">Restaurer</button>
-                    <button type="button" class="btn-cancel" onclick="
-                        const cid = document.getElementById('admin-content-id').value;
-                        hardDeleteContentByAdmin(cid);
-                    ">Supprimer définitivement</button>
-                </div>
-            </div>
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">Section dédiée aux annonces officielles.</p>
 
             <div class="verification-admin-block" style="margin-top: 1.5rem;">
                 <h4>Annonce officielle</h4>
@@ -2029,6 +2049,16 @@ function getSuperAdminPanelHtml() {
             <div class="verification-admin-block" style="margin-top: 1.5rem;">
                 <h4>Gérer les annonces</h4>
                 <div id="admin-announcements-list"></div>
+            </div>
+            <div class="verification-admin-block" style="margin-top: 1.5rem;">
+                <h4>Badges (page dédiée)</h4>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                    Gérer les badges vérifiés sur la page dédiée.
+                </p>
+                <a href="badges-admin.html" class="btn-verify" style="display:inline-flex; align-items:center; gap:0.5rem; width:auto;">
+                    Ouvrir la page Badges
+                    <img src="icons/verify-personal.svg?v=2" alt="Badge" style="width:18px;height:18px;">
+                </a>
             </div>
         </div>
     `;
@@ -2097,8 +2127,49 @@ async function fetchUserPendingRequests(userId) {
 function isVerificationAdmin() {
     return (
         !!window.currentUser &&
-        (VERIFICATION_ADMIN_IDS.has(window.currentUser.id) || isSuperAdmin())
+        (VERIFICATION_ADMIN_IDS.has(window.currentUser.id) ||
+            isSuperAdmin() ||
+            isVerifiedStaffUserId(window.currentUser.id))
     );
+}
+
+function isUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        String(value || "").trim(),
+    );
+}
+
+async function resolveUserIdFlexible(input) {
+    const raw = String(input || "").trim();
+    if (!raw) {
+        ToastManager?.error("Utilisateur introuvable", "Champ vide.");
+        return null;
+    }
+    if (isUuid(raw)) return raw;
+
+    // D'abord tenter localement (allUsers) pour éviter un échec RLS ou réseau
+    const localMatch =
+        (window.allUsers || []).find(
+            (u) => (u.name || "").toLowerCase().includes(raw.toLowerCase()),
+        ) || null;
+    if (localMatch?.id) return localMatch.id;
+
+    try {
+        const { data, error } = await supabase
+            .from("users")
+            .select("id, name")
+            .ilike("name", `%${raw}%`)
+            .limit(1)
+            .maybeSingle();
+        if (error) throw error;
+        if (data?.id) return data.id;
+        ToastManager?.error("Utilisateur introuvable", `Aucun profil pour "${raw}"`);
+        return null;
+    } catch (error) {
+        console.error("Erreur résolution utilisateur:", error);
+        ToastManager?.error("Erreur", "Recherche utilisateur impossible");
+        return null;
+    }
 }
 
 function isVerifiedCreatorUserId(userId) {
@@ -2274,7 +2345,7 @@ async function requestVerification(type) {
 
 async function addVerifiedUserId(type, userId) {
     if (!userId) return;
-    const cleanId = String(userId).trim();
+    const cleanId = await resolveUserIdFlexible(userId);
     if (!cleanId) return;
 
     try {
@@ -2296,6 +2367,9 @@ async function addVerifiedUserId(type, userId) {
             .eq("status", "pending");
 
         await fetchVerifiedBadges();
+        if (window.currentProfileViewed === cleanId && typeof renderProfileIntoContainer === "function") {
+            renderProfileIntoContainer(cleanId);
+        }
 
         if (window.ToastManager) {
             ToastManager.success(
@@ -2320,6 +2394,39 @@ async function addVerifiedUserId(type, userId) {
         window.currentUser
     ) {
         openSettings(window.currentUser.id);
+    }
+}
+
+async function removeVerifiedUserId(type, userId) {
+    if (!userId) return;
+    const cleanId = await resolveUserIdFlexible(userId);
+    if (!cleanId) return;
+
+    try {
+        const { error } = await supabase
+            .from("verified_badges")
+            .delete()
+            .eq("user_id", cleanId)
+            .eq("type", type);
+
+        if (error) throw error;
+
+        await fetchVerifiedBadges();
+        if (window.currentProfileViewed === cleanId && typeof renderProfileIntoContainer === "function") {
+            renderProfileIntoContainer(cleanId);
+        }
+
+        if (window.ToastManager) {
+            ToastManager.success("Badge retiré", "La vérification a été retirée.");
+        }
+    } catch (error) {
+        console.error("Erreur retrait badge:", error);
+        if (window.ToastManager) {
+            ToastManager.error(
+                "Erreur",
+                error?.message || "Impossible de retirer la vérification.",
+            );
+        }
     }
 }
 
@@ -2400,7 +2507,7 @@ async function banUserByAdmin(targetUserId, durationHours, reason) {
         ToastManager?.error("Accès refusé", "Vous devez être super-admin.");
         return;
     }
-    const cleanId = String(targetUserId || "").trim();
+    const cleanId = await resolveUserIdFlexible(targetUserId);
     if (!cleanId) return;
 
     const hours = Math.max(1, parseInt(durationHours, 10) || 0);
@@ -2602,6 +2709,43 @@ async function hardDeleteUserByAdmin(userId) {
             error?.message || "Impossible de supprimer.",
         );
     }
+}
+
+// Actions rapides depuis la page profil (admin)
+async function banUserFromProfile(userId) {
+    const durationInput = document.getElementById(
+        `profile-ban-duration-${userId}`,
+    );
+    const unitInput = document.getElementById(`profile-ban-unit-${userId}`);
+    const reasonInput = document.getElementById(
+        `profile-admin-reason-${userId}`,
+    );
+    const value = parseInt(durationInput?.value, 10) || 24;
+    const unit = unitInput?.value === "days" ? "days" : "hours";
+    const hours = unit === "days" ? value * 24 : value;
+    const reason = reasonInput?.value || "";
+    await banUserByAdmin(userId, hours, reason);
+    renderProfileIntoContainer(userId);
+}
+
+async function unbanUserFromProfile(userId) {
+    await unbanUserByAdmin(userId);
+    renderProfileIntoContainer(userId);
+}
+
+async function moderateContentFromProfile(contentId, action, userId) {
+    const reasonInput = document.getElementById(
+        `profile-admin-reason-${userId}`,
+    );
+    const reason = reasonInput?.value || "";
+    if (action === "hide") {
+        await softDeleteContentByAdmin(contentId, reason);
+    } else if (action === "restore") {
+        await restoreContentByAdmin(contentId);
+    } else if (action === "hard") {
+        await hardDeleteContentByAdmin(contentId);
+    }
+    renderProfileIntoContainer(userId);
 }
 
 const badgeSVGs = {
@@ -2980,6 +3124,155 @@ window.toggleDiscoverFilter = function (filter) {
     renderDiscoverGrid();
 };
 
+const DISCOVER_VERIFIED_MIX_PATTERNS = [
+    [
+        { kind: "verified", count: 1 },
+        { kind: "non_verified", count: 2 },
+        { kind: "verified", count: 3 },
+        { kind: "non_verified", count: 1 },
+        { kind: "verified", count: 2 },
+    ],
+    [
+        { kind: "verified", count: 2 },
+        { kind: "non_verified", count: 1 },
+        { kind: "verified", count: 2 },
+        { kind: "non_verified", count: 1 },
+        { kind: "verified", count: 2 },
+        { kind: "non_verified", count: 1 },
+    ],
+    [
+        { kind: "verified", count: 3 },
+        { kind: "non_verified", count: 1 },
+        { kind: "verified", count: 1 },
+        { kind: "non_verified", count: 1 },
+        { kind: "verified", count: 2 },
+        { kind: "non_verified", count: 1 },
+    ],
+    [
+        { kind: "verified", count: 1 },
+        { kind: "non_verified", count: 1 },
+        { kind: "verified", count: 2 },
+        { kind: "non_verified", count: 1 },
+        { kind: "verified", count: 3 },
+        { kind: "non_verified", count: 1 },
+    ],
+    [
+        { kind: "verified", count: 2 },
+        { kind: "non_verified", count: 2 },
+        { kind: "verified", count: 3 },
+        { kind: "non_verified", count: 1 },
+        { kind: "verified", count: 1 },
+    ],
+];
+
+let discoverMixChaosSeed = Math.max(
+    1,
+    Math.floor(Math.random() * 2147483646),
+);
+
+function nextDiscoverMixRandom() {
+    discoverMixChaosSeed = (discoverMixChaosSeed * 48271) % 2147483647;
+    return (discoverMixChaosSeed - 1) / 2147483646;
+}
+
+function isVerifiedDiscoverUser(user) {
+    if (!user || !user.id) return false;
+    return isVerifiedCreatorUserId(user.id) || isVerifiedStaffUserId(user.id);
+}
+
+function getDiscoverLatestTime(user) {
+    if (!user || !user.id) return 0;
+    const latest = getLatestContent(user.id);
+    if (!latest || !latest.createdAt) return 0;
+    const t = new Date(latest.createdAt).getTime();
+    return Number.isFinite(t) ? t : 0;
+}
+
+function sortUsersByLatestRecency(users) {
+    return [...(users || [])].sort(
+        (a, b) => getDiscoverLatestTime(b) - getDiscoverLatestTime(a),
+    );
+}
+
+function shuffleWithChaos(input) {
+    const arr = [...input];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(nextDiscoverMixRandom() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+function consumeUsersFromPool(pool, count, target) {
+    let taken = 0;
+    while (taken < count && pool.length > 0) {
+        target.push(pool.shift());
+        taken += 1;
+    }
+    return taken;
+}
+
+function buildChaoticDiscoverMix(users) {
+    const usersWithContent = (users || []).filter((u) => getLatestContent(u.id));
+    if (usersWithContent.length <= 2) return usersWithContent;
+
+    const verifiedPool = sortUsersByLatestRecency(
+        usersWithContent.filter((u) => isVerifiedDiscoverUser(u)),
+    );
+    const nonVerifiedPool = sortUsersByLatestRecency(
+        usersWithContent.filter((u) => !isVerifiedDiscoverUser(u)),
+    );
+
+    if (verifiedPool.length === 0 || nonVerifiedPool.length === 0) {
+        return sortUsersByLatestRecency(usersWithContent);
+    }
+
+    let patterns = shuffleWithChaos(DISCOVER_VERIFIED_MIX_PATTERNS);
+    let patternIndex = 0;
+    let segmentIndex = 0;
+    let guard = 0;
+    const mixed = [];
+
+    while (
+        (verifiedPool.length > 0 || nonVerifiedPool.length > 0) &&
+        guard < 5000
+    ) {
+        const pattern = patterns[patternIndex];
+        if (!pattern || pattern.length === 0) break;
+        const segment = pattern[segmentIndex];
+        if (!segment) break;
+
+        const targetPool =
+            segment.kind === "verified" ? verifiedPool : nonVerifiedPool;
+        const fallbackPool =
+            segment.kind === "verified" ? nonVerifiedPool : verifiedPool;
+
+        const pulled = consumeUsersFromPool(targetPool, segment.count, mixed);
+        if (pulled === 0) {
+            consumeUsersFromPool(fallbackPool, 1, mixed);
+        }
+
+        segmentIndex += 1;
+        if (segmentIndex >= pattern.length) {
+            segmentIndex = 0;
+            patternIndex = (patternIndex + 1) % patterns.length;
+            if (patternIndex === 0) {
+                patterns = shuffleWithChaos(DISCOVER_VERIFIED_MIX_PATTERNS);
+            }
+        }
+        guard += 1;
+    }
+
+    if (verifiedPool.length > 0) {
+        mixed.push(...verifiedPool);
+    }
+    if (nonVerifiedPool.length > 0) {
+        mixed.push(...nonVerifiedPool);
+    }
+
+    return mixed;
+}
+
 function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
     const user = getUser(userId);
     if (!user) return "";
@@ -3216,7 +3509,254 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
             </div>
         </div>
     `;
+
+    // Plus de recherche ici (panneau réduit aux annonces)
 }
+
+// Page badges dédiée (ancienne API, gardé pour compatibilité)
+function renderBadgeAdminPage() {
+    // La page badges-admin.html utilise maintenant js/badges-admin.js (module).
+    // Cette fonction est laissée vide pour éviter les erreurs de référence.
+}
+
+// Recherche live pour l'attribution manuelle de badge (super admin)
+function setupAdminVerifySearch() {
+    setupAdminUserSearch(
+        "admin-verify-target",
+        "admin-verify-suggestions",
+        (user) => selectAdminVerifyTarget(user.id, user.name),
+    );
+}
+
+function selectAdminVerifyTarget(userId, userName) {
+    const input = document.getElementById("admin-verify-target");
+    const suggestions = document.getElementById("admin-verify-suggestions");
+    if (input) input.value = userId;
+    if (suggestions) {
+        suggestions.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.65rem 0.75rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(59,130,246,0.08);">
+                <div>
+                    <div style="font-weight:700;">${escapeHtml(userName || "")}</div>
+                    <div style="color: var(--text-secondary); font-size:0.85rem;">${escapeHtml(userId || "")}</div>
+                </div>
+                <span style="color: var(--accent-color); font-weight:600;">Sélectionné</span>
+            </div>
+        `;
+    }
+}
+
+// Recherche live pour bannissement
+function setupAdminBanSearch() {
+    setupAdminUserSearch(
+        "admin-ban-user-id",
+        "admin-ban-suggestions",
+        (user) => selectAdminBanTarget(user.id, user.name),
+    );
+}
+
+function selectAdminBanTarget(userId, userName) {
+    const input = document.getElementById("admin-ban-user-id");
+    const suggestions = document.getElementById("admin-ban-suggestions");
+    if (input) input.value = userId;
+    if (suggestions) {
+        suggestions.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.65rem 0.75rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(239,68,68,0.08);">
+                <div>
+                    <div style="font-weight:700;">${escapeHtml(userName || "")}</div>
+                    <div style="color: var(--text-secondary); font-size:0.85rem;">${escapeHtml(userId || "")}</div>
+                </div>
+                <span style="color: #ef4444; font-weight:600;">Sélectionné</span>
+            </div>
+        `;
+    }
+}
+
+// Recherche live pour modération contenu (par utilisateur)
+function setupAdminContentSearch() {
+    setupAdminUserSearch(
+        "admin-content-user-search",
+        "admin-content-user-suggestions",
+        (user) => {
+            selectAdminContentUser(user.id, user.name);
+            loadAdminUserContents(user.id);
+        },
+    );
+}
+
+function selectAdminContentUser(userId, userName) {
+    const input = document.getElementById("admin-content-user-search");
+    const suggestions = document.getElementById("admin-content-user-suggestions");
+    if (input) input.value = userName || userId;
+    if (suggestions) {
+        suggestions.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.65rem 0.75rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(245,158,11,0.08);">
+                <div>
+                    <div style="font-weight:700;">${escapeHtml(userName || "")}</div>
+                    <div style="color: var(--text-secondary); font-size:0.85rem;">${escapeHtml(userId || "")}</div>
+                </div>
+                <span style="color: #f59e0b; font-weight:600;">Sélectionné</span>
+            </div>
+        `;
+    }
+}
+
+async function loadAdminUserContents(userId) {
+    const container = document.getElementById("admin-content-user-contents");
+    if (!container || !userId || !supabase) return;
+    container.innerHTML = '<div class="verification-empty">Chargement...</div>';
+    try {
+        const { data, error } = await supabase
+            .from("content")
+            .select("id, title, created_at")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(10);
+
+        if (error) throw error;
+        const items = data || [];
+        if (!items.length) {
+            container.innerHTML =
+                '<div class="verification-empty">Aucun contenu récent.</div>';
+            return;
+        }
+        container.innerHTML = items
+            .map((c) => {
+                const title = escapeHtml(c.title || "Sans titre");
+                const cid = escapeHtml(c.id || "");
+                const dateLabel = c.created_at
+                    ? new Intl.DateTimeFormat("fr-FR", {
+                          day: "2-digit",
+                          month: "2-digit",
+                      }).format(new Date(c.created_at))
+                    : "";
+                return `
+                <button type="button"
+                    class="btn-ghost"
+                    style="display:flex; justify-content:space-between; align-items:center; width:100%; border:1px solid var(--border-color); padding:0.55rem 0.75rem; border-radius:10px; background: rgba(255,255,255,0.02); color: var(--text-primary); cursor:pointer;"
+                    onclick="document.getElementById('admin-content-id').value='${cid}'">
+                    <span style="font-weight:600;">${title}</span>
+                    <span style="color: var(--text-secondary); font-size:0.85rem;">${cid}${dateLabel ? " · " + dateLabel : ""}</span>
+                </button>`;
+            })
+            .join("");
+    } catch (error) {
+        console.error("Erreur récupération contenus utilisateur:", error);
+        container.innerHTML =
+            '<div class="verification-empty">Erreur chargement contenus.</div>';
+    }
+}
+
+// Utilitaire partagé pour recherches utilisateur live
+function setupAdminUserSearch(inputId, suggestionsId, onSelect, options = {}) {
+    const input = document.getElementById(inputId);
+    const suggestions = document.getElementById(suggestionsId);
+    if (!input || !suggestions || !supabase) return;
+
+    let debounceTimer = null;
+
+    let lastQuery = "";
+
+    const search = async (query) => {
+        suggestions.innerHTML = "";
+        const q = (query || "").trim();
+        if (q.length === 0) return;
+        lastQuery = q;
+
+        // 1) Essayer localement (allUsers) pour éviter les latences/RLS
+        const localResults = (window.allUsers || [])
+            .filter(
+                (u) =>
+                    (u.name || "").toLowerCase().includes(q.toLowerCase()) ||
+                    String(u.id || "").startsWith(q),
+            )
+            .slice(0, 8);
+
+        const renderList = (list) => {
+            if (!list.length) {
+                suggestions.innerHTML =
+                    '<div class="verification-empty">Aucun résultat</div>';
+                return;
+            }
+            suggestions.innerHTML = list
+                .map((u) => {
+                    const safeName = escapeHtml(u.name || "Utilisateur");
+                    const safeId = escapeHtml(u.id || "");
+                    const avatarUrl =
+                        u.avatar && u.avatar.startsWith("http")
+                            ? u.avatar
+                            : "https://placehold.co/48x48?text=👤";
+                    const avatar = options.showAvatar
+                        ? `<img src="${escapeHtml(
+                              avatarUrl,
+                          )}" alt="${safeName}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;border:1px solid var(--border-color);">`
+                        : "";
+                    return `
+                    <button type="button"
+                        class="btn-ghost"
+                        style="display:flex; justify-content:space-between; align-items:center; width:100%; border:1px solid var(--border-color); padding:0.55rem 0.75rem; border-radius:10px; background: rgba(255,255,255,0.03); color: var(--text-primary); cursor:pointer; gap:0.6rem;"
+                        onclick="window.__adminUserSearchSelect('${inputId}','${suggestionsId}','${safeId}','${safeName}')">
+                        <span style="display:flex; align-items:center; gap:0.5rem;">
+                            ${avatar}
+                            <span style="font-weight:600;">${safeName}</span>
+                        </span>
+                        <span style="color: var(--text-secondary); font-size:0.85rem;">${safeId}</span>
+                    </button>`;
+                })
+                .join("");
+        };
+
+        if (localResults.length) {
+            renderList(localResults);
+        } else {
+            try {
+                const { data, error } = await supabase
+                    .from("users")
+                    .select("id, name, avatar")
+                    .ilike("name", `%${q}%`)
+                    .order("name", { ascending: true })
+                    .limit(8);
+
+                if (error) throw error;
+                // Éviter d'afficher une réponse obsolète si l'utilisateur tape vite
+                if (lastQuery !== q) return;
+                renderList(data || []);
+            } catch (error) {
+                console.error("Erreur recherche utilisateur admin:", error);
+                suggestions.innerHTML =
+                    '<div class="verification-empty">Erreur de recherche</div>';
+            }
+        }
+
+        // Stock callback (même si aucun résultat, pour cohérence)
+        window.__adminUserSearchCallbacks =
+            window.__adminUserSearchCallbacks || {};
+        window.__adminUserSearchCallbacks[inputId] = onSelect;
+    };
+
+    input.addEventListener("input", () => {
+        const query = String(input.value || "").trim();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => search(query), 200);
+    });
+}
+
+// Pont global pour gérer les boutons inline
+window.__adminUserSearchSelect = (inputId, suggestionsId, userId, userName) => {
+    const cb =
+        (window.__adminUserSearchCallbacks &&
+            window.__adminUserSearchCallbacks[inputId]) ||
+        null;
+    if (typeof cb === "function") {
+        cb({ id: userId, name: userName });
+    } else {
+        // Fallback: juste remplir le champ
+        const input = document.getElementById(inputId);
+        if (input) input.value = userId;
+    }
+    // Nettoie la liste
+    const suggestions = document.getElementById(suggestionsId);
+    if (suggestions) suggestions.innerHTML = "";
+};
 
 async function getLiveStreamsForDiscover() {
     try {
@@ -3535,26 +4075,11 @@ async function renderDiscoverGrid() {
     const currentFilter = window.discoverFilter || "all";
     let cardsHTML = "";
 
-    // Prioriser les comptes vérifiés, puis récence du contenu
-    usersToDisplay.sort((a, b) => {
-        const aVerified =
-            isVerifiedCreatorUserId(a.id) || isVerifiedStaffUserId(a.id);
-        const bVerified =
-            isVerifiedCreatorUserId(b.id) || isVerifiedStaffUserId(b.id);
-        if (aVerified !== bVerified) return aVerified ? -1 : 1;
-
-        const aLatest = getLatestContent(a.id);
-        const bLatest = getLatestContent(b.id);
-        const aTime =
-            aLatest && aLatest.createdAt
-                ? new Date(aLatest.createdAt).getTime()
-                : 0;
-        const bTime =
-            bLatest && bLatest.createdAt
-                ? new Date(bLatest.createdAt).getTime()
-                : 0;
-        return bTime - aTime;
-    });
+    // Tri de base par récence puis mélange pondéré vérifiés/non-vérifiés
+    usersToDisplay = sortUsersByLatestRecency(usersToDisplay);
+    if (currentFilter === "all") {
+        usersToDisplay = buildChaoticDiscoverMix(usersToDisplay);
+    }
 
     const arcIdsForDiscover = usersToDisplay
         .map((u) => getLatestContent(u.id))
@@ -4722,6 +5247,8 @@ async function renderProfileTimeline(userId) {
     console.log("Utilisateur trouvé:", user.name);
     const currentUserId = window.currentUserId;
     const isOwnProfile = userId === currentUserId;
+    const isAdminViewer = isSuperAdmin();
+    const adminReasonInputId = `profile-admin-reason-${userId}`;
     // Récupérer les contenus
     const contents = getUserContentLocal(userId);
     const userBadgesHtml = renderUserBadges(userId);
@@ -5205,6 +5732,24 @@ async function renderProfileTimeline(userId) {
                 </div>
             `;
             }
+            if (isAdminViewer && currentUserId !== userId) {
+                actionsHtml += `
+                <div class="timeline-actions" style="margin-top: 0.5rem; display: flex; gap: 0.35rem; flex-wrap: wrap;">
+                    <button class="btn-action" style="background:none; border:1px solid #f59e0b; color:#f59e0b; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.75rem; cursor:pointer;"
+                        onclick="moderateContentFromProfile('${content.contentId || content.id}', 'hide', '${userId}')">
+                        🛑 Masquer
+                    </button>
+                    <button class="btn-action" style="background:none; border:1px solid var(--border-color); color:var(--text-secondary); padding:0.25rem 0.5rem; border-radius:4px; font-size:0.75rem; cursor:pointer;"
+                        onclick="moderateContentFromProfile('${content.contentId || content.id}', 'restore', '${userId}')">
+                        ↩️ Restaurer
+                    </button>
+                    <button class="btn-action" style="background:none; border:1px solid #ef4444; color:#ef4444; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.75rem; cursor:pointer;"
+                        onclick="moderateContentFromProfile('${content.contentId || content.id}', 'hard', '${userId}')">
+                        ❌ Supprimer définitivement
+                    </button>
+                </div>
+            `;
+            }
 
             return `
             <div class="timeline-item ${itemClass}">
@@ -5385,6 +5930,35 @@ async function renderProfileTimeline(userId) {
     `
         : "";
 
+    const banStateLabel = isUserBanned(user)
+        ? `<span style="color:#ef4444; font-weight:600;">Banni (reste ${getBanRemainingLabel(user) || "en cours"})</span>`
+        : `<span style="color: var(--text-secondary);">Statut : actif</span>`;
+
+    const adminInlineHtml =
+        isAdminViewer && !isOwnProfile
+            ? `
+        <div class="admin-inline-box" style="margin: 1rem auto 0; max-width: 760px; border: 1px solid var(--border-color); border-radius: 12px; padding: 0.9rem 1rem; background: rgba(255,255,255,0.03);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+                <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                    <strong style="font-size:0.95rem;">Modération rapide (admin)</strong>
+                    ${banStateLabel}
+                </div>
+                <div style="display:flex; gap:0.45rem; align-items:center; flex-wrap:wrap;">
+                    <input type="number" id="profile-ban-duration-${userId}" class="form-input" value="24" min="1" style="width:90px;" aria-label="Durée">
+                    <select id="profile-ban-unit-${userId}" class="form-input" style="width:110px;">
+                        <option value="hours">heures</option>
+                        <option value="days">jours</option>
+                    </select>
+                    <input type="text" id="${adminReasonInputId}" class="form-input" placeholder="Raison (optionnel)" style="min-width:160px;">
+                    <button class="btn-verify" style="white-space:nowrap;" onclick="banUserFromProfile('${userId}')">Bannir</button>
+                    <button class="btn-cancel" style="white-space:nowrap;" onclick="unbanUserFromProfile('${userId}')">Lever le ban</button>
+                </div>
+            </div>
+            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-top:0.35rem;">Les actions s'appliquent immédiatement sur ce profil. La raison est enregistrée avec le ban ou la suppression douce.</p>
+        </div>
+        `
+            : "";
+
     const profileHtml = `
         ${bannerHtml}
         <div class="profile-hero">
@@ -5415,6 +5989,7 @@ async function renderProfileTimeline(userId) {
                     ${followButtonHtml}
                     ${shareButtonHtml}
                 </div>
+                ${adminInlineHtml}
             `
                     : `
                 <div class="follow-section">
@@ -6775,6 +7350,7 @@ async function openCreateMenu(
                 "Vous devez créer un ARC avant de pouvoir poster une trace. Voulez-vous créer votre premier ARC maintenant ?",
             )
         ) {
+            setPendingCreatePostAfterArc(userId, { reason: "arc-required" });
             closeCreateMenu();
             if (window.openCreateModal) {
                 window.openCreateModal();
@@ -6804,6 +7380,8 @@ async function openCreateMenu(
         }
     }
     const nextDay = existingContent ? existingContent.day_number : maxDay + 1;
+    const isFirstPost = !existingContent && (!contents || contents.length === 0);
+    const defaultTraceType = isFirstPost ? "text" : "image";
 
     // Generate ARC Options (Mandatory)
     let arcOptions = "";
@@ -6905,11 +7483,13 @@ async function openCreateMenu(
                 <div class="form-group">
                     <label>Type de publication</label>
                     <select id="create-type" class="form-input">
-                        <option value="image" ${isEdit && existingContent.type === "image" ? "selected" : ""}>Image</option>
+                        <option value="text" ${isEdit && existingContent.type === "text" ? "selected" : !isEdit && defaultTraceType === "text" ? "selected" : ""}>Texte</option>
+                        <option value="image" ${isEdit && existingContent.type === "image" ? "selected" : !isEdit && defaultTraceType === "image" ? "selected" : ""}>Image</option>
                         <option value="video" ${isEdit && existingContent.type === "video" ? "selected" : ""}>Vidéo</option>
                         <option value="live" ${isEdit && existingContent.type === "live" ? "selected" : ""}>Live / Stream</option>
                     </select>
                     <div class="type-quick">
+                        <button type="button" data-type="text">Texte</button>
                         <button type="button" data-type="image">Image</button>
                         <button type="button" data-type="video">Vidéo</button>
                         <button type="button" data-type="live">Live</button>
@@ -6949,7 +7529,7 @@ async function openCreateMenu(
                     </div>
 
                     <input type="hidden" id="create-media-url" value="${isEdit && (existingContent.media_url || existingContent.mediaUrl) ? existingContent.media_url || existingContent.mediaUrl : ""}">
-                    <input type="hidden" id="create-media-type" value="${isEdit && existingContent.type ? existingContent.type : "image"}">
+                    <input type="hidden" id="create-media-type" value="${isEdit && existingContent.type ? existingContent.type : defaultTraceType}">
                 </div>
 
                 <div class="actions-bar">
@@ -7261,6 +7841,7 @@ async function openCreateMenu(
             }
 
             if (result.success) {
+                clearPendingCreatePostAfterArc();
                 // Recharger les données locales et rafraîchir l'interface
                 const contentResult = await getUserContent(userId);
                 if (contentResult.success) {
@@ -7437,6 +8018,8 @@ window.openSettings = openSettings;
 window.closeSettings = closeSettings;
 window.openCreateMenu = openCreateMenu;
 window.closeCreateMenu = closeCreateMenu;
+window.setPendingCreatePostAfterArc = setPendingCreatePostAfterArc;
+window.clearPendingCreatePostAfterArc = clearPendingCreatePostAfterArc;
 window.toggleTimelineExpand = toggleTimelineExpand;
 window.openImmersive = openImmersive;
 window.closeImmersive = closeImmersive;
@@ -7446,6 +8029,7 @@ window.renderAmbassadorBadgeById = renderAmbassadorBadgeById;
 window.isAmbassadorUserId = isAmbassadorUserId;
 window.requestVerification = requestVerification;
 window.addVerifiedUserId = addVerifiedUserId;
+window.removeVerifiedUserId = removeVerifiedUserId;
 window.handleVerificationSelection = handleVerificationSelection;
 window.isSuperAdmin = isSuperAdmin;
 window.createAdminAnnouncement = createAdminAnnouncement;
@@ -7456,14 +8040,22 @@ window.editAdminAnnouncement = editAdminAnnouncement;
 window.cancelAdminAnnouncementEdit = cancelAdminAnnouncementEdit;
 window.renderSuperAdminPage = renderSuperAdminPage;
 window.fetchAdminAnnouncements = fetchAdminAnnouncements;
+window.fetchVerifiedBadges = fetchVerifiedBadges;
+window.fetchVerificationRequests = fetchVerificationRequests;
+window.getVerifiedBadgeSets = getVerifiedBadgeSets;
 window.banUserByAdmin = banUserByAdmin;
 window.unbanUserByAdmin = unbanUserByAdmin;
+window.banUserFromProfile = banUserFromProfile;
+window.unbanUserFromProfile = unbanUserFromProfile;
 window.softDeleteContentByAdmin = softDeleteContentByAdmin;
 window.restoreContentByAdmin = restoreContentByAdmin;
 window.hardDeleteContentByAdmin = hardDeleteContentByAdmin;
+window.moderateContentFromProfile = moderateContentFromProfile;
 window.hardDeleteUserByAdmin = hardDeleteUserByAdmin;
+window.renderBadgeAdminPage = renderBadgeAdminPage;
 window.toggleFollow = toggleFollow;
 window.openReplyPrompt = openReplyPrompt;
+window.setupAdminUserSearch = setupAdminUserSearch;
 if (typeof openArcDetails !== "undefined") {
     window.openArcDetails = openArcDetails;
 }

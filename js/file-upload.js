@@ -120,7 +120,7 @@ async function uploadFile(file, folder = "content", onProgress) {
             // Messages d'erreur plus spécifiques
             if (error.statusCode === 400) {
                 throw new Error(
-                    "Fichier invalide ou bucket non trouvé. Vérifiez la configuration Supabase.",
+                    "Fichier invalide ou bucket media non configure. Executez sql/storage-init.sql dans Supabase puis reessayez.",
                 );
             } else if (error.statusCode === 401) {
                 throw new Error("Non autorisé. Vérifiez votre connexion.");
