@@ -17,6 +17,12 @@ window.arcCollaboratorsCache = new Map();
 window.arcCollaboratorsPending = new Set();
 window.pendingCreatePostAfterArc = null;
 let firstPostOnboardingHandled = false;
+const CONTENT_PREFETCH_BATCH_SIZE = 10;
+const CONTENT_FETCH_BATCH_SIZE = 50;
+const FOLLOWED_IDS_CACHE_TTL_MS = 15000;
+let followedUserIdsCache = new Set();
+let followedUserIdsCacheOwner = null;
+let followedUserIdsCacheUpdatedAt = 0;
 
 function isMobileDevice() {
     return window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
@@ -892,11 +898,90 @@ async function ensureUserProfile(user) {
    CHARGEMENT DES DONNÉES
    ======================================== */
 
+function resetLoadedCollections() {
+    Object.keys(userContents || {}).forEach((key) => delete userContents[key]);
+    Object.keys(userProjects || {}).forEach((key) => delete userProjects[key]);
+}
+
+async function preloadUserContents(users, { publicOnly = false } = {}) {
+    const safeUsers = Array.isArray(users) ? users : [];
+    if (safeUsers.length === 0) return;
+
+    const columns = publicOnly
+        ? `
+            *,
+            arcs (
+                id,
+                title,
+                status,
+                user_id
+            )
+        `
+        : `
+            *,
+            arcs (
+                id,
+                title,
+                status,
+                user_id
+            ),
+            projects (
+                id,
+                name
+            )
+        `;
+
+    // Traitement par batch sur user_id pour limiter les requêtes.
+    for (let i = 0; i < safeUsers.length; i += CONTENT_FETCH_BATCH_SIZE) {
+        const chunk = safeUsers.slice(i, i + CONTENT_FETCH_BATCH_SIZE);
+        const userIds = chunk.map((u) => u.id);
+        try {
+            const { data, error } = await supabase
+                .from("content")
+                .select(columns)
+                .in("user_id", userIds)
+                .order("day_number", { ascending: false });
+
+            if (error) throw error;
+
+            // Indexer par user_id
+            const grouped = new Map();
+            (data || []).forEach((row) => {
+                const uid = row.user_id;
+                if (!grouped.has(uid)) grouped.set(uid, []);
+                grouped.get(uid).push(convertSupabaseContent(row));
+            });
+
+            chunk.forEach((user) => {
+                userContents[user.id] = grouped.get(user.id) || [];
+            });
+        } catch (error) {
+            console.error("Erreur préchargement contenu batch:", error);
+            chunk.forEach((user) => {
+                userContents[user.id] = [];
+            });
+        }
+    }
+}
+
+async function ensureUserProjectsLoaded(userId) {
+    if (!userId) return [];
+    if (Array.isArray(userProjects[userId])) {
+        return userProjects[userId];
+    }
+
+    const projectsResult = await getUserProjects(userId);
+    userProjects[userId] = projectsResult.success ? projectsResult.data || [] : [];
+    return userProjects[userId];
+}
+
 // Charger toutes les données pour un utilisateur connecté
 async function loadAllData() {
     try {
         window.hasLoadedUsers = false;
         window.userLoadError = null;
+        resetLoadedCollections();
+
         // S'assurer que l'utilisateur connecté a un profil
         if (window.currentUser) {
             await ensureUserProfile(window.currentUser);
@@ -904,47 +989,37 @@ async function loadAllData() {
 
         // Charger tous les utilisateurs
         const usersResult = await getAllUsers();
-        if (usersResult.success) {
-            allUsers = usersResult.data;
-
-            // S'assurer que l'utilisateur connecté est dans la liste
-            if (
-                window.currentUser &&
-                !allUsers.find((u) => u.id === window.currentUser.id)
-            ) {
-                // Recharger le profil de l'utilisateur connecté
-                const userProfileResult = await getUserProfile(
-                    window.currentUser.id,
-                );
-                if (userProfileResult.success) {
-                    allUsers.push(userProfileResult.data);
-                }
-            }
-            window.hasLoadedUsers = true;
-        } else {
+        if (!usersResult.success) {
+            allUsers = [];
             window.userLoadError =
                 usersResult.error || "Erreur de chargement des utilisateurs";
             window.hasLoadedUsers = true;
+            return;
+        }
+
+        allUsers = usersResult.data || [];
+
+        // S'assurer que l'utilisateur connecté est dans la liste
+        if (
+            window.currentUser &&
+            !allUsers.find((u) => u.id === window.currentUser.id)
+        ) {
+            const userProfileResult = await getUserProfile(window.currentUser.id);
+            if (userProfileResult.success) {
+                allUsers.push(userProfileResult.data);
+            }
         }
 
         computeAmbassadors();
+
+        // Charger les badges vérifiés avant de rendre les annonces pour que le badge apparaisse
         await fetchVerifiedBadges();
-        await fetchAdminAnnouncements();
+        await Promise.all([
+            preloadUserContents(allUsers, { publicOnly: false }),
+            fetchAdminAnnouncements(),
+        ]);
 
-        // Charger le contenu pour chaque utilisateur
-        for (const user of allUsers) {
-            const contentResult = await getUserContent(user.id);
-            if (contentResult.success) {
-                userContents[user.id] = contentResult.data.map(
-                    convertSupabaseContent,
-                );
-            }
-
-            const projectsResult = await getUserProjects(user.id);
-            if (projectsResult.success) {
-                userProjects[user.id] = projectsResult.data;
-            }
-        }
+        window.hasLoadedUsers = true;
     } catch (error) {
         console.error("Erreur chargement données:", error);
         window.userLoadError =
@@ -958,29 +1033,28 @@ async function loadPublicData() {
     try {
         window.hasLoadedUsers = false;
         window.userLoadError = null;
+        resetLoadedCollections();
+
         const usersResult = await getAllUsers();
-        if (usersResult.success) {
-            allUsers = usersResult.data;
-            window.hasLoadedUsers = true;
-        } else {
+        if (!usersResult.success) {
+            allUsers = [];
             window.userLoadError =
                 usersResult.error || "Erreur de chargement des utilisateurs";
             window.hasLoadedUsers = true;
+            return;
         }
 
+        allUsers = usersResult.data || [];
         computeAmbassadors();
-        await fetchVerifiedBadges();
-        await fetchAdminAnnouncements();
 
-        // Charger le contenu public
-        for (const user of allUsers) {
-            const contentResult = await getUserContentPublic(user.id);
-            if (contentResult.success) {
-                userContents[user.id] = contentResult.data.map(
-                    convertSupabaseContent,
-                );
-            }
-        }
+        // Même ordre côté public pour assurer l'affichage correct des badges dans les annonces
+        await fetchVerifiedBadges();
+        await Promise.all([
+            preloadUserContents(allUsers, { publicOnly: true }),
+            fetchAdminAnnouncements(),
+        ]);
+
+        window.hasLoadedUsers = true;
     } catch (error) {
         console.error("Erreur chargement données publiques:", error);
         window.userLoadError =
@@ -1387,6 +1461,15 @@ async function toggleFollow(viewerId, targetUserId) {
         }
 
         const isNowFollowing = !isCurrentlyFollowing;
+
+        // Garder un cache local cohérent pour éviter les requêtes répétées.
+        followedUserIdsCacheOwner = viewerId;
+        if (isNowFollowing) {
+            followedUserIdsCache.add(targetUserId);
+        } else {
+            followedUserIdsCache.delete(targetUserId);
+        }
+        followedUserIdsCacheUpdatedAt = Date.now();
 
         // Update Profile Button
         if (profileBtn) {
@@ -2127,9 +2210,7 @@ async function fetchUserPendingRequests(userId) {
 function isVerificationAdmin() {
     return (
         !!window.currentUser &&
-        (VERIFICATION_ADMIN_IDS.has(window.currentUser.id) ||
-            isSuperAdmin() ||
-            isVerifiedStaffUserId(window.currentUser.id))
+        (VERIFICATION_ADMIN_IDS.has(window.currentUser.id) || isSuperAdmin())
     );
 }
 
@@ -2196,30 +2277,54 @@ function renderAmbassadorBadgeById(userId) {
 }
 
 function renderVerificationBadgeById(userId) {
-    if (isVerifiedStaffUserId(userId)) {
-        return `<img src="icons/verify-com.svg?v=${BADGE_ASSET_VERSION}" alt="Équipe vérifiée" class="verification-badge">`;
-    }
-    if (isVerifiedCreatorUserId(userId)) {
-        return `<img src="icons/verify-personal.svg?v=${BADGE_ASSET_VERSION}" alt="Créateur vérifié" class="verification-badge">`;
-    }
+    const user = getUser(userId) || {};
 
-    const user = getUser(userId);
-    const badgeValue =
-        user && user.badge ? String(user.badge).toLowerCase() : "";
-    if (
+    const badgeValue = user.badge ? String(user.badge).toLowerCase() : "";
+    const accountTypeValue = String(
+        user.account_type || user.user_metadata?.account_type || "personal",
+    ).toLowerCase();
+
+    const isPersonalAccount = accountTypeValue === "personal";
+    const isOrgAccount =
+        accountTypeValue === "team" ||
+        accountTypeValue === "enterprise" ||
+        accountTypeValue === "company" ||
+        accountTypeValue === "community" ||
+        accountTypeValue === "organization" ||
+        accountTypeValue === "organisation" ||
+        accountTypeValue === "org";
+
+    const orgRequested =
         badgeValue === "staff" ||
         badgeValue === "team" ||
         badgeValue === "community" ||
         badgeValue === "company" ||
-        badgeValue === "enterprise"
-    ) {
-        return `<img src="icons/verify-com.svg?v=${BADGE_ASSET_VERSION}" alt="Équipe vérifiée" class="verification-badge">`;
-    }
-    if (
+        badgeValue === "enterprise";
+
+    const personalRequested =
         badgeValue === "creator" ||
         badgeValue === "personal" ||
-        badgeValue === "verified"
-    ) {
+        badgeValue === "verified" ||
+        accountTypeValue === "creator" ||
+        accountTypeValue === "verified";
+
+    const isStaffListed = isVerifiedStaffUserId(userId);
+    const isCreatorListed = isVerifiedCreatorUserId(userId);
+
+    // Priorité : type de compte personal bloque les badges d'équipe même si listé staff
+    if (isPersonalAccount) {
+        if (isCreatorListed || personalRequested) {
+            return `<img src="icons/verify-personal.svg?v=${BADGE_ASSET_VERSION}" alt="Créateur vérifié" class="verification-badge">`;
+        }
+        // Compte perso sans vérification => pas de badge
+        return "";
+    }
+
+    // Comptes non personnels
+    if (isStaffListed || orgRequested || isOrgAccount) {
+        return `<img src="icons/verify-com.svg?v=${BADGE_ASSET_VERSION}" alt="Équipe vérifiée" class="verification-badge">`;
+    }
+    if (isCreatorListed || personalRequested) {
         return `<img src="icons/verify-personal.svg?v=${BADGE_ASSET_VERSION}" alt="Créateur vérifié" class="verification-badge">`;
     }
     if (badgeValue === "ambassador") {
@@ -2776,34 +2881,66 @@ const badgeSVGs = {
 
 function calculateConsistency(userId) {
     const contents = getUserContentLocal(userId);
-    if (contents.length < 7) return null;
+    if (!contents || contents.length === 0) return null;
 
-    const sortedByDay = [...contents].sort((a, b) => {
-        const dayA = a.dayNumber ?? a.day_number ?? 0;
-        const dayB = b.dayNumber ?? b.day_number ?? 0;
-        return dayA - dayB;
+    const sorted = [...contents].sort((a, b) => {
+        const dateA =
+            new Date(a.created_at || a.createdAt || 0).getTime() ||
+            (a.dayNumber ?? a.day_number ?? 0);
+        const dateB =
+            new Date(b.created_at || b.createdAt || 0).getTime() ||
+            (b.dayNumber ?? b.day_number ?? 0);
+        return dateA - dateB;
     });
 
-    let consecutiveDays = 1;
-    let maxConsecutive = 1;
+    const getDate = (item) => {
+        const d = item.created_at || item.createdAt;
+        const parsed = d ? new Date(d) : null;
+        return parsed && !isNaN(parsed) ? parsed : null;
+    };
 
-    for (let i = 1; i < sortedByDay.length; i++) {
-        const currentDay =
-            sortedByDay[i].dayNumber ?? sortedByDay[i].day_number ?? 0;
-        const previousDay =
-            sortedByDay[i - 1].dayNumber ?? sortedByDay[i - 1].day_number ?? 0;
-        if (currentDay - previousDay === 1) {
-            consecutiveDays++;
-            maxConsecutive = Math.max(maxConsecutive, consecutiveDays);
+    const MAX_GAP_MS = 36 * 60 * 60 * 1000; // tolérance 1,5 jour pour l'enchaînement
+
+    const isConsecutive = (current, previous) => {
+        const dCur = getDate(current);
+        const dPrev = getDate(previous);
+        if (dCur && dPrev) {
+            const delta = dCur.getTime() - dPrev.getTime();
+            return delta > 0 && delta <= MAX_GAP_MS;
+        }
+        // fallback dayNumber s'il n'y a pas de dates fiables
+        const dayCur =
+            current.dayNumber ?? current.day_number ?? Number.NaN;
+        const dayPrev =
+            previous.dayNumber ?? previous.day_number ?? Number.NaN;
+        if (Number.isInteger(dayCur) && Number.isInteger(dayPrev)) {
+            return dayCur - dayPrev === 1;
+        }
+        return false;
+    };
+
+    // Calculer la streak courante (doit se terminer sur le dernier post)
+    let streak = 1;
+    for (let i = sorted.length - 1; i > 0; i--) {
+        if (isConsecutive(sorted[i], sorted[i - 1])) {
+            streak++;
         } else {
-            consecutiveDays = 1;
+            break;
         }
     }
 
-    if (maxConsecutive >= 365) return "consistency365";
-    if (maxConsecutive >= 100) return "consistency100";
-    if (maxConsecutive >= 30) return "consistency30";
-    if (maxConsecutive >= 7) return "consistency7";
+    const lastDate = getDate(sorted[sorted.length - 1]);
+    const daysSinceLast = lastDate
+        ? (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24)
+        : Infinity;
+
+    // Règles de réinitialisation : le badge disparaît si on n'a pas posté depuis plus que sa fenêtre
+    const isFresh = (limitDays) => daysSinceLast <= limitDays;
+
+    if (streak >= 365 && isFresh(7)) return "consistency365";
+    if (streak >= 100 && isFresh(7)) return "consistency100";
+    if (streak >= 30 && isFresh(30)) return "consistency30";
+    if (streak >= 7 && isFresh(7)) return "consistency7";
     return null;
 }
 
@@ -2813,7 +2950,22 @@ function determineTrajectoryType(userId) {
 
     if (!user || contents.length === 0) return null;
 
-    const userTitle = user.title.toLowerCase();
+    const userTitle = (user.title || "").toLowerCase();
+    const userName = (user.name || "").toLowerCase();
+
+    // Comptes officiels / équipes / entreprises
+    if (
+        userTitle.includes("official") ||
+        userTitle.includes("officiel") ||
+        userTitle.includes("team") ||
+        userTitle.includes("équipe") ||
+        userTitle.includes("owner") ||
+        userName === "rize" ||
+        userName.includes("rize team")
+    ) {
+        return "enterprise";
+    }
+
     const textContent =
         contents
             .map((c) => (c.title + " " + c.description).toLowerCase())
@@ -2913,10 +3065,12 @@ function getUserBadges(userId) {
     }
 
     const consistency = calculateConsistency(userId);
-    if (consistency) {
+    const isPersonalAccount =
+        !trajectoryType || trajectoryType === "solo"; // badges de constance réservés aux comptes perso
+    if (consistency && isPersonalAccount) {
         const labels = {
-            consistency7: "7j consécutifs",
-            consistency30: "30j consécutifs",
+            consistency7: "7j consécutifs (hebdo)",
+            consistency30: "30j consécutifs (1 mois)",
             consistency100: "100j consécutifs",
             consistency365: "365j consécutifs",
         };
@@ -2956,10 +3110,15 @@ function renderBadges(badgesList) {
 }
 
 function renderUserBadges(userId) {
-    const verificationOnlyHtml = renderVerificationBadgeOnly(userId);
-    if (verificationOnlyHtml) return verificationOnlyHtml;
+    const verificationHtml = renderVerificationBadgeById(userId);
     const userBadges = getUserBadges(userId);
-    return renderBadges(userBadges);
+    if (!verificationHtml && userBadges.length === 0) return "";
+    return `
+        <div class="badge-container">
+            ${verificationHtml || ""}
+            ${userBadges.map((b) => generateBadge(b.type, b.label)).join("")}
+        </div>
+    `;
 }
 
 function normalizeExternalUrl(raw) {
@@ -4116,17 +4275,16 @@ async function renderDiscoverGrid() {
             }
         }
 
-        // Fetch follow status for all users in parallel
-        const followPromises = usersToDisplay.map(async (user) => {
-            const isFollowed = await isFollowing(currentUser.id, user.id);
+        // Une seule requête followers pour tout le rendu Discover.
+        const followedSet = await getFollowedUserIdSet();
+        const results = usersToDisplay.map((user) => {
+            const isFollowed = followedSet.has(user.id);
             const contentId = userContentMap.get(user.id);
             const isEncouraged = contentId
                 ? encouragedContentIds.has(contentId)
                 : false;
             return { user, isFollowed, isEncouraged };
         });
-
-        const results = await Promise.all(followPromises);
 
         // Filter based on logic
         if (currentFilter === "following") {
@@ -4354,15 +4512,29 @@ function findContentById(contentId) {
     return null;
 }
 
-async function getFollowedUserIdSet() {
+async function getFollowedUserIdSet(forceRefresh = false) {
     if (!currentUser) return new Set();
+    const viewerId = currentUser.id;
+    const now = Date.now();
+    const cacheIsFresh =
+        followedUserIdsCacheOwner === viewerId &&
+        now - followedUserIdsCacheUpdatedAt < FOLLOWED_IDS_CACHE_TTL_MS;
+    if (!forceRefresh && cacheIsFresh) {
+        return new Set(followedUserIdsCache);
+    }
+
     try {
         const { data, error } = await supabase
             .from("followers")
             .select("following_id")
-            .eq("follower_id", currentUser.id);
+            .eq("follower_id", viewerId);
         if (error) throw error;
-        return new Set((data || []).map((row) => row.following_id));
+        followedUserIdsCacheOwner = viewerId;
+        followedUserIdsCache = new Set(
+            (data || []).map((row) => row.following_id),
+        );
+        followedUserIdsCacheUpdatedAt = Date.now();
+        return new Set(followedUserIdsCache);
     } catch (e) {
         console.error("Error fetching followed users for personalization:", e);
         return new Set();
@@ -4569,6 +4741,7 @@ async function renderImmersiveFeed(contents) {
                       ? "#Bloqué"
                       : "#Pause";
             const isAnnouncement = isAnnouncementContent(content);
+            const timeLabel = timeAgo(content.createdAt || content.created_at);
             const replyCount = isAnnouncement
                 ? getReplyCount(content.contentId)
                 : 0;
@@ -4640,9 +4813,16 @@ async function renderImmersiveFeed(contents) {
                 <div class="post-content-wrap">
                     ${mediaHtml}
                     <div class="post-info">
-                        <span class="step-indicator">Jour ${content.dayNumber}</span>
-                        <span class="state-tag">${stateLabel}</span>
-                        ${isAnnouncement ? '<span class="announcement-chip">Annonce</span>' : ""}
+                        <div class="immersive-meta-row">
+                            <span class="step-indicator">Jour ${content.dayNumber}</span>
+                            <span class="state-tag">${stateLabel}</span>
+                            ${isAnnouncement ? '<span class="announcement-chip">Annonce</span>' : ""}
+                            ${
+                                timeLabel
+                                    ? `<span class="time-ago-label">${timeLabel}</span>`
+                                    : ""
+                            }
+                        </div>
                         
                         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                             <h2>${content.title}</h2>
@@ -4864,6 +5044,14 @@ async function openImmersive(startUserId, startContentId = null) {
             <div id="immersive-content-container">
                 ${contentHtml}
             </div>
+            <div class="immersive-nav-arrows" id="immersive-nav-arrows">
+                <button class="immersive-arrow" id="immersive-arrow-up" aria-label="Post précédent">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+                </button>
+                <button class="immersive-arrow" id="immersive-arrow-down" aria-label="Post suivant">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9l-6 6-6-6"/></svg>
+                </button>
+            </div>
         `;
 
         // Scroll to the starting content
@@ -4890,6 +5078,7 @@ async function openImmersive(startUserId, startContentId = null) {
             setupImmersiveVideoUI();
             setupImmersiveSnapNav();
             setupImmersiveKeyboardNav();
+            setupImmersiveArrowNav();
         }, 100);
     } catch (error) {
         console.error("Error opening immersive:", error);
@@ -5226,6 +5415,80 @@ function setupImmersiveKeyboardNav() {
     document.addEventListener("keydown", handler);
 }
 
+function setupImmersiveArrowNav() {
+    const overlay = document.getElementById("immersive-overlay");
+    const arrows = document.getElementById("immersive-nav-arrows");
+    const btnUp = document.getElementById("immersive-arrow-up");
+    const btnDown = document.getElementById("immersive-arrow-down");
+
+    if (!overlay || !arrows || !btnUp || !btnDown) return;
+    if (overlay.dataset.arrowNavBound === "true") return;
+    overlay.dataset.arrowNavBound = "true";
+
+    const getPosts = () =>
+        Array.from(document.querySelectorAll(".immersive-post"));
+
+    const getActiveIndex = (posts) => {
+        let closestIndex = 0;
+        let minDistance = Infinity;
+        posts.forEach((post, index) => {
+            const rect = post.getBoundingClientRect();
+            const distance = Math.abs(rect.top);
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestIndex = index;
+            }
+        });
+        return closestIndex;
+    };
+
+    const scrollToIndex = (posts, index) => {
+        if (!posts[index]) return;
+        posts[index].scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    const updateDisabled = () => {
+        const posts = getPosts();
+        if (posts.length === 0) {
+            btnUp.disabled = true;
+            btnDown.disabled = true;
+            return;
+        }
+        const idx = getActiveIndex(posts);
+        btnUp.disabled = idx <= 0;
+        btnDown.disabled = idx >= posts.length - 1;
+    };
+
+    btnUp.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const posts = getPosts();
+        const idx = getActiveIndex(posts);
+        scrollToIndex(posts, Math.max(0, idx - 1));
+    });
+
+    btnDown.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const posts = getPosts();
+        const idx = getActiveIndex(posts);
+        scrollToIndex(posts, Math.min(posts.length - 1, idx + 1));
+    });
+
+    let ticking = false;
+    const onScroll = () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => {
+            updateDisabled();
+            ticking = false;
+        });
+    };
+
+    overlay.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", updateDisabled);
+
+    updateDisabled();
+}
+
 /* ========================================
    RENDERING - PROFILE TIMELINE
    ======================================== */
@@ -5252,6 +5515,7 @@ async function renderProfileTimeline(userId) {
     // Récupérer les contenus
     const contents = getUserContentLocal(userId);
     const userBadgesHtml = renderUserBadges(userId);
+    const projectsPromise = ensureUserProjectsLoaded(userId);
 
     // Récupérer les ARCs
     let userArcs = [];
@@ -5909,7 +6173,7 @@ async function renderProfileTimeline(userId) {
         ? `<img src="${safeBanner}" class="profile-banner" alt="Bannière de ${user.name}" onerror="this.style.display='none'">`
         : "";
 
-    const projects = userProjects[userId] || [];
+    const projects = await projectsPromise;
     const projectsHtml = projects.length
         ? `
         <div class="projects-grid">
@@ -8154,6 +8418,7 @@ function subscribeToRealtime() {
             },
         )
         .subscribe();
+
 }
 
 /* ========================================

@@ -12,24 +12,69 @@ export function initBadgeAdminPage({
 
     let pendingRequestsCache = [];
 
-    const renderList = () => {
+    const renderList = async () => {
         const list = document.getElementById("badge-admin-list");
         if (!list) return;
         const sets = getVerifiedBadgeSets ? getVerifiedBadgeSets() : null;
         const creators = sets ? Array.from(sets.creators || []) : [];
         const staff = sets ? Array.from(sets.staff || []) : [];
-        const item = (id, label) => `
-            <div class="verification-request-item" style="justify-content:space-between;">
-                <span class="verification-request-name">${label}</span>
-                <span class="verification-request-id">${id}</span>
+        const ids = [...creators, ...staff];
+        const profilesResult = window.fetchUsersByIds
+            ? await window.fetchUsersByIds(ids)
+            : { success: false, data: [] };
+        const profileMap = new Map(
+            (profilesResult.data || []).map((u) => [u.id, u]),
+        );
+        const item = (id, typeLabel, typeKey) => {
+            const p = profileMap.get(id) || {};
+            const name = p.name || id;
+            const avatar = p.avatar || "https://placehold.co/40?text=👤";
+            return `
+            <div class="verification-request-item" style="justify-content:space-between; gap:0.75rem;">
+                <div style="display:flex; align-items:center; gap:0.6rem; min-width:0;">
+                    <img src="${avatar}" alt="${name}" style="width:32px; height:32px; border-radius:50%; object-fit:cover;">
+                    <div style="display:flex; flex-direction:column; min-width:0;">
+                        <span class="verification-request-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span>
+                        <span class="verification-request-id" style="color:var(--text-secondary); font-size:0.8rem;">${id}</span>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span class="verification-request-type">${typeLabel}</span>
+                    <button class="btn-cancel badge-remove-btn" data-user-id="${id}" data-type="${typeKey}" title="Retirer le badge">Retirer</button>
+                </div>
             </div>
         `;
+        };
         list.innerHTML = `
             <div style="margin-bottom:0.5rem; font-weight:700;">Créateurs (${creators.length})</div>
-            ${creators.map((id) => item(id, "Créateur")).join("") || '<div class="verification-empty">Aucun</div>'}
+            ${creators.map((id) => item(id, "Créateur", "creator")).join("") || '<div class="verification-empty">Aucun</div>'}
             <div style="margin:1rem 0 0.5rem; font-weight:700;">Staff (${staff.length})</div>
-            ${staff.map((id) => item(id, "Staff")).join("") || '<div class="verification-empty">Aucun</div>'}
+            ${staff.map((id) => item(id, "Staff", "staff")).join("") || '<div class="verification-empty">Aucun</div>'}
         `;
+
+        // Bind remove buttons
+        list.querySelectorAll(".badge-remove-btn").forEach((btn) => {
+            btn.addEventListener("click", async () => {
+                const uid = btn.dataset.userId;
+                const type = btn.dataset.type || "creator";
+                try {
+                    btn.disabled = true;
+                    btn.classList.add("is-pending");
+                    await removeVerifiedUserId(type, uid);
+                    await fetchVerifiedBadges();
+                    await renderList();
+                } catch (error) {
+                    console.error("Erreur retrait badge:", error);
+                    ToastManager?.error(
+                        "Erreur",
+                        error?.message || "Impossible de retirer le badge.",
+                    );
+                } finally {
+                    btn.disabled = false;
+                    btn.classList.remove("is-pending");
+                }
+            });
+        });
     };
 
     const renderRequests = () => {
@@ -118,15 +163,28 @@ export function initBadgeAdminPage({
         { showAvatar: true },
     );
 
+    const applyBtn = document.getElementById("badge-admin-apply");
+    const removeBtn = document.getElementById("badge-admin-remove");
+    const defaultApplyLabel = applyBtn?.textContent || "Attribuer";
+    const defaultRemoveLabel = removeBtn?.textContent || "Retirer";
+
     const handleApply = async (isRemove) => {
-        const applyBtn = document.getElementById("badge-admin-apply");
-        const removeBtn = document.getElementById("badge-admin-remove");
         const setPending = (state) => {
             [applyBtn, removeBtn].forEach((b) => {
                 if (!b) return;
                 b.disabled = state;
                 b.classList.toggle("is-pending", state);
             });
+            if (applyBtn) {
+                applyBtn.textContent = state && !isRemove
+                    ? "En cours d'attribution..."
+                    : defaultApplyLabel;
+            }
+            if (removeBtn) {
+                removeBtn.textContent = state && isRemove
+                    ? "Retrait en cours..."
+                    : defaultRemoveLabel;
+            }
         };
         const target = document.getElementById("badge-admin-search")?.value || "";
         const type =

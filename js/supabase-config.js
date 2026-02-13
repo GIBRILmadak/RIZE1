@@ -354,6 +354,23 @@ async function getUserContent(userId) {
     return { success: true, data: data };
 }
 
+// Batch fetch basic user profiles (id, name, avatar)
+async function fetchUsersByIds(ids = []) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+        return { success: true, data: [] };
+    }
+    const unique = Array.from(new Set(ids));
+    const { data, error } = await supabase
+        .from('users')
+        .select('id, name, avatar')
+        .in('id', unique);
+    if (error) {
+        console.error('Erreur fetchUsersByIds:', error);
+        return { success: false, error: error.message };
+    }
+    return { success: true, data };
+}
+
 // Récupérer le contenu public d'un utilisateur (sans jointures)
 async function getUserContentPublic(userId) {
     const { data, error } = await supabase

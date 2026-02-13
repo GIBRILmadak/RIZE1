@@ -171,27 +171,61 @@ const badgeSVGs = {
 // Calculer la constance (jours consécutifs)
 function calculateConsistency(userId) {
     const contents = getUserContent(userId);
-    if (contents.length < 7) return null;
+    if (!contents || contents.length === 0) return null;
 
-    // Trier par jour croissant
-    const sortedByDay = [...contents].sort((a, b) => a.dayNumber - b.dayNumber);
-    
-    let consecutiveDays = 1;
-    let maxConsecutive = 1;
+    const sorted = [...contents].sort((a, b) => {
+        const dateA =
+            new Date(a.created_at || a.createdAt || 0).getTime() ||
+            (a.dayNumber ?? 0);
+        const dateB =
+            new Date(b.created_at || b.createdAt || 0).getTime() ||
+            (b.dayNumber ?? 0);
+        return dateA - dateB;
+    });
 
-    for (let i = 1; i < sortedByDay.length; i++) {
-        if (sortedByDay[i].dayNumber - sortedByDay[i-1].dayNumber === 1) {
-            consecutiveDays++;
-            maxConsecutive = Math.max(maxConsecutive, consecutiveDays);
+    const getDate = (item) => {
+        const d = item.created_at || item.createdAt;
+        const parsed = d ? new Date(d) : null;
+        return parsed && !isNaN(parsed) ? parsed : null;
+    };
+
+    const MAX_GAP_MS = 36 * 60 * 60 * 1000; // tolérance 1,5 jour
+
+    const isConsecutive = (current, previous) => {
+        const dCur = getDate(current);
+        const dPrev = getDate(previous);
+        if (dCur && dPrev) {
+            const delta = dCur.getTime() - dPrev.getTime();
+            return delta > 0 && delta <= MAX_GAP_MS;
+        }
+        const dayCur = current.dayNumber ?? Number.NaN;
+        const dayPrev = previous.dayNumber ?? Number.NaN;
+        if (Number.isInteger(dayCur) && Number.isInteger(dayPrev)) {
+            return dayCur - dayPrev === 1;
+        }
+        return false;
+    };
+
+    let streak = 1;
+    for (let i = sorted.length - 1; i > 0; i--) {
+        if (isConsecutive(sorted[i], sorted[i - 1])) {
+            streak++;
         } else {
-            consecutiveDays = 1;
+            break;
         }
     }
 
-    if (maxConsecutive >= 365) return 'consistency365';
-    if (maxConsecutive >= 100) return 'consistency100';
-    if (maxConsecutive >= 30) return 'consistency30';
-    if (maxConsecutive >= 7) return 'consistency7';
+    const lastDate = getDate(sorted[sorted.length - 1]);
+    const daysSinceLast = lastDate
+        ? (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24)
+        : Infinity;
+
+    const isFresh = (limitDays) => daysSinceLast <= limitDays;
+
+    if (streak >= 365 && isFresh(7)) return 'consistency365';
+    if (streak >= 100 && isFresh(7)) return 'consistency100';
+    if (streak >= 30 && isFresh(30)) return 'consistency30';
+    if (streak >= 7 && isFresh(7)) return 'consistency7';
     return null;
 }
 
@@ -202,10 +236,23 @@ function determineTrajectoryType(userId) {
     
     if (contents.length === 0) return null;
 
-    // Heuristique basée sur le titre/description/métadonnées
-    const userTitle = user.title.toLowerCase();
+    const userTitle = (user.title || '').toLowerCase();
+    const userName = (user.name || '').toLowerCase();
     const userProjectIds = [...new Set(contents.map(c => c.projectId))].join('');
     const textContent = (contents.map(c => (c.title + ' ' + c.description).toLowerCase()).join(' ') + ' ' + userTitle).toLowerCase();
+    
+    // Comptes officiels / équipes / entreprises
+    if (
+        userTitle.includes('official') ||
+        userTitle.includes('officiel') ||
+        userTitle.includes('team') ||
+        userTitle.includes('équipe') ||
+        userTitle.includes('owner') ||
+        userName === 'rize' ||
+        userName.includes('rize team')
+    ) {
+        return 'enterprise';
+    }
     
     // Check pour type de trajectoire
     if (textContent.includes('unreal') || userTitle.includes('designer') || textContent.includes('motion')) return 'creative';
@@ -281,10 +328,11 @@ function getUserBadges(userId) {
 
     // Badge constance
     const consistency = calculateConsistency(userId);
-    if (consistency) {
+    const isPersonalAccount = !trajectoryType || trajectoryType === 'solo'; // badges de constance réservés aux comptes perso
+    if (consistency && isPersonalAccount) {
         const labels = {
-            consistency7: '7j consécutifs',
-            consistency30: '30j consécutifs',
+            consistency7: '7j consécutifs (hebdo)',
+            consistency30: '30j consécutifs (1 mois)',
             consistency100: '100j consécutifs',
             consistency365: '365j consécutifs'
         };
