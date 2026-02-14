@@ -538,7 +538,7 @@ async function getUserEngagementTotals(userId) {
    FONCTIONS D'AUTHENTIFICATION AVANCÉES
    ======================================== */
 
-// Connexion avec Google OAuth
+// Google OAuth login
 async function signInWithGoogle() {
     try {
         const { data, error } = await supabase.auth.signInWithOAuth({

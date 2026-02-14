@@ -243,7 +243,7 @@ async function handleSubmit(e) {
                 showError(result.error || 'Erreur lors de la création du compte.');
             }
         } else {
-            // Connexion
+            // Login
             const result = await signIn(email, password);
             
             if (result.success) {
@@ -258,7 +258,7 @@ async function handleSubmit(e) {
                 
                 // Le profil sera créé automatiquement par ensureUserProfile() dans app-supabase.js
                 
-                showSuccess('Connexion réussie ! Redirection...');
+                showSuccess('Login successful! Redirecting...');
                 
                 // Rediriger vers la page principale après 1 seconde
                 setTimeout(() => {
@@ -329,7 +329,7 @@ async function handleForgotPassword() {
 async function handleGoogleSignIn() {
     try {
         googleSigninBtn.disabled = true;
-        googleSigninBtn.innerHTML = '<svg class="btn-loader" style="animation: spin 1s linear infinite;" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg><span>Connexion en cours...</span>';
+        googleSigninBtn.innerHTML = '<svg class="btn-loader" style="animation: spin 1s linear infinite;" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg><span>Signing in...</span>';
         
         const result = await signInWithGoogle();
         

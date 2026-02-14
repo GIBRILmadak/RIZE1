@@ -311,11 +311,11 @@ async function requestArcCollaboration(arcId, ownerId) {
     if (!window.currentUser) {
         if (window.ToastManager) {
             ToastManager.info(
-                "Connexion requise",
-                "Connectez-vous pour demander une collaboration",
+                "Login required",
+                "Log in to request a collaboration",
             );
         } else {
-            alert("Connectez-vous pour demander une collaboration.");
+            alert("Log in to request a collaboration.");
         }
         setTimeout(() => (window.location.href = "login.html"), 1200);
         return;
@@ -562,6 +562,7 @@ async function initializeApp() {
                 navigateTo("discover");
             }
             await loadAllData();
+            await updateHeroVisibilityForUser(user.id);
         } else if (savedSession) {
             if (typeof ToastManager !== "undefined") {
                 ToastManager.info(
@@ -574,9 +575,11 @@ async function initializeApp() {
             }
             updateNavigation(false);
             await loadPublicData();
+            updateHeroVisibilityForUser(null);
         } else {
             updateNavigation(false);
             await loadPublicData();
+            updateHeroVisibilityForUser(null);
         }
 
         if (skipLanding && discoverAvailable) {
@@ -613,15 +616,15 @@ function updateNavigation(isLoggedIn) {
     const navAuth = document.getElementById("nav-auth");
     const navProfile = document.getElementById("nav-profile");
 
-    if (navAuth) {
-        if (isLoggedIn) {
-            navAuth.style.display = "none";
-        } else {
-            navAuth.style.display = "block";
-            navAuth.textContent = "Connexion";
-            navAuth.onclick = () => (window.location.href = "login.html");
+        if (navAuth) {
+            if (isLoggedIn) {
+                navAuth.style.display = "none";
+            } else {
+                navAuth.style.display = "block";
+                navAuth.textContent = "Login / Register";
+                navAuth.onclick = () => (window.location.href = "login.html");
+            }
         }
-    }
 
     if (navProfile) {
         if (!isLoggedIn) {
@@ -631,7 +634,46 @@ function updateNavigation(isLoggedIn) {
         }
     }
 
+    // Retirer le bouton réglages de la nav s'il existait
+    const navSettings = document.getElementById("nav-settings-btn");
+    if (navSettings) navSettings.remove();
+
     handleLoginPromptContext();
+}
+
+/* ========================================
+   HERO VISIBILITY (Landing)
+   ======================================== */
+const userArcCounts = new Map();
+
+async function getUserArcCount(userId) {
+    if (!userId) return 0;
+    if (userArcCounts.has(userId)) return userArcCounts.get(userId);
+    try {
+        const { count, error } = await supabase
+            .from("arcs")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", userId);
+        if (error) throw error;
+        const c = count || 0;
+        userArcCounts.set(userId, c);
+        return c;
+    } catch (e) {
+        console.error("Error fetching arc count:", e);
+        return 0;
+    }
+}
+
+async function updateHeroVisibilityForUser(userId) {
+    const hero = document.getElementById("hero");
+    if (!hero) return;
+    // Not logged in -> show hero
+    if (!userId) {
+        hero.style.display = "";
+        return;
+    }
+    const count = await getUserArcCount(userId);
+    hero.style.display = count > 0 ? "none" : "";
 }
 
 /* ========================================
@@ -1069,7 +1111,12 @@ async function loadPublicData() {
 
 // Récupérer un utilisateur par ID
 function getUser(userId) {
-    return allUsers.find((u) => u.id === userId);
+    const found = allUsers.find((u) => u.id === userId);
+    if (found) return found;
+    if (window.currentUser && window.currentUser.id === userId) {
+        return window.currentUser;
+    }
+    return null;
 }
 
 // --- Gestion hashtags ---
@@ -1408,7 +1455,7 @@ function convertSupabaseContent(supabaseContent) {
 async function toggleFollow(viewerId, targetUserId) {
     if (!window.currentUser) {
         ToastManager.info(
-            "Connexion requise",
+            "Login required",
             "Vous devez être connecté pour suivre des utilisateurs",
         );
         setTimeout(() => (window.location.href = "login.html"), 1500);
@@ -1577,7 +1624,7 @@ async function incrementViews(contentId) {
 async function toggleCourage(contentId, btnElement) {
     if (!currentUser) {
         ToastManager.info(
-            "Connexion requise",
+            "Login required",
             "Connectez-vous pour encourager",
         );
         return;
@@ -2223,9 +2270,9 @@ function isUuid(value) {
 async function resolveUserIdFlexible(input) {
     const raw = String(input || "").trim();
     if (!raw) {
-        ToastManager?.error("Utilisateur introuvable", "Champ vide.");
-        return null;
-    }
+            ToastManager?.error("User not found", "Empty field.");
+            return null;
+        }
     if (isUuid(raw)) return raw;
 
     // D'abord tenter localement (allUsers) pour éviter un échec RLS ou réseau
@@ -2244,7 +2291,7 @@ async function resolveUserIdFlexible(input) {
             .maybeSingle();
         if (error) throw error;
         if (data?.id) return data.id;
-        ToastManager?.error("Utilisateur introuvable", `Aucun profil pour "${raw}"`);
+        ToastManager?.error("User not found", `No profile for "${raw}"`);
         return null;
     } catch (error) {
         console.error("Erreur résolution utilisateur:", error);
@@ -5497,7 +5544,22 @@ async function renderProfileTimeline(userId) {
     console.log("renderProfileTimeline appelé pour userId:", userId);
     console.log("allUsers contient:", allUsers.length, "utilisateurs");
 
-    const user = getUser(userId);
+    let user = getUser(userId);
+    if (!user) {
+        // Tentative de récupération ponctuelle du profil
+        try {
+            const res = await getUserProfile(userId);
+            if (res.success && res.data) {
+                allUsers.push(res.data);
+                user = res.data;
+            }
+        } catch (e) {
+            console.error("Fetch profil échec:", e);
+        }
+    }
+    if (!user && window.currentUser && window.currentUser.id === userId) {
+        user = window.currentUser;
+    }
     if (!user) {
         console.error("Utilisateur non trouvé dans allUsers:", userId);
         console.log(
@@ -6613,8 +6675,17 @@ function closeSettings() {
     }, 300);
 }
 
+function ensureSettingsModal() {
+    if (document.getElementById("settings-modal")) return;
+    const modal = document.createElement("div");
+    modal.id = "settings-modal";
+    modal.innerHTML = `<div class="settings-container"></div>`;
+    document.body.appendChild(modal);
+}
+
 async function openSettings(userId) {
     if (!currentUser || currentUser.id !== userId) return;
+    ensureSettingsModal();
 
     const user = getUser(userId);
     const modal = document.getElementById("settings-modal");
@@ -6739,6 +6810,18 @@ async function openSettings(userId) {
                 <button type="button" class="settings-credits-btn" onclick="window.location.href='credits.html'" style="background: var(--accent-color); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem;">
                     Voir les crédits
                 </button>
+            </div>
+            
+            <div class="settings-section">
+                <h3>Langue</h3>
+                <div class="form-group">
+                    <label for="lang-select">Choisissez votre langue</label>
+                    <select id="lang-select" class="lang-select">
+                        <option value="en">English (US)</option>
+                        <option value="fr">Français</option>
+                    </select>
+                    <div class="form-hint">La langue est aussi détectée automatiquement selon votre localisation.</div>
+                </div>
             </div>
             
             <form id="settings-form" novalidate>
@@ -6892,6 +6975,10 @@ async function openSettings(userId) {
     // Force reflow
     modal.offsetHeight;
     modal.classList.add("active");
+
+    if (window.refreshLanguageControl) {
+        window.refreshLanguageControl();
+    }
 
     const accountButtons = container.querySelectorAll(".account-type-btn");
     accountButtons.forEach((btn) => {
@@ -7049,7 +7136,7 @@ function launchLive(userId) {
     if (!window.currentUser) {
         if (window.ToastManager) {
             ToastManager.error(
-                "Connexion requise",
+            "Login required",
                 "Vous devez être connecté pour lancer un live",
             );
         }

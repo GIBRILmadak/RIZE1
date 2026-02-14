@@ -107,37 +107,30 @@ function renderArcCreationForm(arcToEdit = null) {
     createContainer.innerHTML = `
         <div class="arc-creation-header">
             <h2>${title}</h2>
-            <p>Un ARC est une promesse que vous vous faites.</p>
-        </div>
-
-        <div class="hooks-container" style="${isEdit ? 'display:none;' : ''}">
-            <div class="hook-label">Inspiration</div>
-            <div class="hook-scroller" id="hook-scroller">
-                <!-- Hooks injected by JS -->
-            </div>
+            <p>Qu'est-ce qu'un ARC ? Un conteneur d'objectifs reliant vos traces quotidiennes à votre résultat.</p>
         </div>
 
         <form id="create-arc-form" class="arc-form">
             ${isEdit ? `<input type="hidden" name="arc_id" value="${arcToEdit.id}">` : ''}
             
             <div class="form-group">
-                <label for="arc-title">Titre de votre ARC</label>
+                <label for="arc-title">Titre de votre ARC *</label>
                 <input type="text" id="arc-title" name="title" placeholder="Ex: 30 jours pour..." required class="form-input large-input" value="${isEdit ? escapeHtml(arcToEdit.title) : ''}">
             </div>
 
             <div class="form-group">
-                <label for="arc-goal">Objectif Final</label>
-                <textarea id="arc-goal" name="goal" placeholder="Quel est le résultat concret attendu à la fin ?" rows="2" class="form-input">${isEdit ? escapeHtml(arcToEdit.goal || '') : ''}</textarea>
+                <label for="arc-goal">Objectif final *</label>
+                <textarea id="arc-goal" name="goal" placeholder="Ex: Site en ligne le 1er mars" rows="2" class="form-input" required>${isEdit ? escapeHtml(arcToEdit.goal || '') : ''}</textarea>
             </div>
 
             <div class="form-row">
                 <div class="form-group">
-                    <label for="arc-start-date">Date de début</label>
-                    <input type="date" id="arc-start-date" name="start_date" class="form-input" value="${defaultStartDate}">
+                    <label for="arc-start-date">Date de début *</label>
+                    <input type="date" id="arc-start-date" name="start_date" class="form-input" value="${defaultStartDate}" required>
                 </div>
                 <div class="form-group">
-                    <label for="arc-end-date">Date de fin</label>
-                    <input type="date" id="arc-end-date" name="end_date" class="form-input" value="${defaultEndDate}">
+                    <label for="arc-end-date">Date de fin *</label>
+                    <input type="date" id="arc-end-date" name="end_date" class="form-input" value="${defaultEndDate}" required>
                 </div>
             </div>
 

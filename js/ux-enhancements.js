@@ -133,8 +133,6 @@ class SessionManager {
         const expiry = Date.now() + expiresIn;
         localStorage.setItem(this.SESSION_KEY, JSON.stringify(user));
         localStorage.setItem(this.EXPIRY_KEY, expiry.toString());
-        
-        ToastManager.success('Connexion réussie', 'Vous resterez connecté');
     }
     
     static loadSession() {

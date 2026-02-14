@@ -297,6 +297,194 @@ nav {
     filter: drop-shadow(0 0 4px rgba(14,165,233,0.5));
 }
 
+.lang-select {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 0.4rem 0.75rem;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+/* --- HERO ABOVE THE FOLD --- */
+.hero {
+    position: relative;
+    padding: 140px 0 80px;
+    overflow: hidden;
+    background: radial-gradient(circle at 20% 20%, rgba(255,255,255,0.08), transparent 35%),
+        radial-gradient(circle at 80% 10%, rgba(255,255,255,0.05), transparent 40%),
+        linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0));
+}
+
+.hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 70% 70%, rgba(255,255,255,0.04), transparent 45%);
+    pointer-events: none;
+}
+
+.hero-grid {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 2.5rem;
+    align-items: center;
+}
+
+.hero-copy {
+    max-width: 620px;
+}
+
+.hero-eyebrow {
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+}
+
+.hero-title {
+    font-family: var(--font-heading);
+    font-size: clamp(2.4rem, 3vw + 1rem, 3.4rem);
+    margin-bottom: 1rem;
+    line-height: 1.05;
+}
+
+.hero-lede {
+    color: var(--text-secondary);
+    font-size: 1.05rem;
+    margin-bottom: 1.25rem;
+    max-width: 540px;
+}
+
+.hero-bullets {
+    list-style: none;
+    display: grid;
+    gap: 0.5rem;
+    margin: 0 0 1.5rem 0;
+    padding: 0;
+}
+
+.hero-bullets li {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.hero-bullets li::before {
+    content: \"•\";
+    color: var(--accent-color);
+    font-size: 1.4rem;
+    line-height: 1;
+}
+
+.hero-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.hero .btn-large {
+    width: auto;
+    padding: 0.9rem 1.5rem;
+    margin-top: 0;
+    font-size: 1rem;
+}
+
+.hero-secondary {
+    border: 1px solid var(--border-color);
+}
+
+.hero-meta {
+    margin-top: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+
+.hero-media {
+    position: relative;
+}
+
+.hero-video-shell {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-color);
+    border-radius: 18px;
+    padding: 1.25rem;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.35);
+    position: relative;
+    overflow: hidden;
+}
+
+.hero-video-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.7rem;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.08);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    letter-spacing: 0.01em;
+}
+
+.hero-video-frame {
+    margin-top: 1rem;
+    background: linear-gradient(160deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 0.75rem;
+    position: relative;
+}
+
+.hero-video-player {
+    width: 100%;
+    border-radius: 12px;
+    display: block;
+    background: #000;
+    cursor: pointer;
+}
+
+.hero-unmute {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    padding: 0.5rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.85rem;
+    backdrop-filter: blur(6px);
+    transition: var(--transition);
+}
+
+.hero-unmute:hover {
+    background: rgba(0,0,0,0.8);
+}
+
+.hero-footnote {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-top: 0.75rem;
+}
+
+@media (max-width: 768px) {
+    .hero {
+        padding: 120px 0 40px;
+    }
+    .hero-actions { gap: 0.6rem; }
+    .hero .btn-large { width: 100%; justify-content: center; }
+}
+
 /* --- PAGES --- */
 .page {
     display: none;
@@ -3082,7 +3270,7 @@ html.light-mode .btn-theme-toggle:hover {
     }
 
     /* Masquer le logo RIZE sur la page discover pour les téléphones */
-    #discover .logo {
+    nav .logo {
         display: none !important;
     }
 }

@@ -639,6 +639,19 @@ function renderSettingsModal(userId) {
                 </div>
             </div>
 
+            <!-- SECTION LANGUE -->
+            <div class="settings-section">
+                <h3>Langue</h3>
+                <div class="form-group">
+                    <label for="lang-select">Choisissez votre langue</label>
+                    <select id="lang-select" class="lang-select">
+                        <option value="en">English (US)</option>
+                        <option value="fr">Français</option>
+                    </select>
+                    <div class="form-hint">La langue est aussi détectée automatiquement selon votre localisation.</div>
+                </div>
+            </div>
+
             <!-- ACTIONS -->
             <div class="actions-bar">
                 <button type="submit" class="btn-save">Mettre à jour</button>
@@ -680,14 +693,26 @@ function handleSettingsSave(userId) {
     return false;
 }
 
+function ensureSettingsModal() {
+    if (document.getElementById('settings-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'settings-modal';
+    modal.innerHTML = '<div class="settings-container"></div>';
+    document.body.appendChild(modal);
+}
+
 // Ouvrir la modale de réglages
 function openSettings(userId) {
     initUserEditData(userId);
+    ensureSettingsModal();
     const modal = document.getElementById('settings-modal');
     const container = modal.querySelector('.settings-container');
     container.innerHTML = renderSettingsModal(userId);
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
+    if (window.refreshLanguageControl) {
+        window.refreshLanguageControl();
+    }
 }
 
 // Fermer la modale de réglages
