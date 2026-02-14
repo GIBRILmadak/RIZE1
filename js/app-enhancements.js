@@ -470,12 +470,222 @@ class PerformanceOptimizer {
     }
 }
 
+// Feedback widget (modal + sticky tab)
+class FeedbackWidget {
+    static init() {
+        if (this.initialized) return;
+        this.initialized = true;
+        this.storageKey = "rize_feedback_state";
+        // Receiver for admin review (fallback to known super admin UUID)
+        this.receiverId = (typeof SUPER_ADMIN_ID !== "undefined" && SUPER_ADMIN_ID) ||
+            "b0f9f893-1706-4721-899c-d26ad79afc86";
+        this.createElements();
+        this.bindEvents();
+        this.restoreState();
+    }
+
+    static createElements() {
+        if (document.getElementById("feedback-modal")) return;
+
+        this.backdrop = document.createElement("div");
+        this.backdrop.id = "feedback-backdrop";
+        this.backdrop.className = "feedback-backdrop";
+
+        this.modal = document.createElement("div");
+        this.modal.id = "feedback-modal";
+        this.modal.className = "feedback-modal";
+        this.modal.innerHTML = `
+            <div class="feedback-header">
+                <p class="feedback-eyebrow">Quick pulse</p>
+                <h3>What do you think of RIZE?</h3>
+                <p class="feedback-sub">Your feedback helps us build faster.</p>
+            </div>
+            <form id="feedback-form" class="feedback-form">
+                <div class="feedback-emoji-row" role="radiogroup" aria-label="Satisfaction level">
+                    ${["😡","😕","😐","🙂","🤩"].map((emoji, idx) => `
+                        <label class="feedback-emoji">
+                            <input type="radio" name="feedback-mood" value="${idx - 2}" ${idx === 3 ? "checked" : ""}>
+                            <span>${emoji}</span>
+                        </label>
+                    `).join("")}
+                </div>
+                <label class="feedback-label" for="feedback-comment">Anything specific?</label>
+                <textarea id="feedback-comment" name="comment" rows="3" placeholder="Tell us what works, what doesn't, or what's missing."></textarea>
+                <div class="feedback-actions">
+                    <button type="submit" class="btn btn-primary feedback-submit">Give Feedback</button>
+                    <button type="button" class="btn btn-ghost feedback-close">Close</button>
+                </div>
+            </form>
+        `;
+
+        this.toggleButton = document.createElement("button");
+        this.toggleButton.id = "feedback-toggle";
+        this.toggleButton.type = "button";
+        this.toggleButton.className = "feedback-toggle";
+        this.toggleButton.innerHTML = `<span class="dot"></span><span class="text">Feedback</span>`;
+
+        document.body.appendChild(this.backdrop);
+        document.body.appendChild(this.modal);
+        document.body.appendChild(this.toggleButton);
+    }
+
+    static bindEvents() {
+        if (!this.modal || !this.backdrop || !this.toggleButton) return;
+        const closeBtn = this.modal.querySelector(".feedback-close");
+        const form = this.modal.querySelector("#feedback-form");
+
+        this.backdrop.addEventListener("click", () => FeedbackWidget.collapse());
+        if (closeBtn) closeBtn.addEventListener("click", () => FeedbackWidget.collapse());
+        if (form) form.addEventListener("submit", FeedbackWidget.handleSubmit.bind(this));
+        this.toggleButton.addEventListener("click", () => FeedbackWidget.open());
+    }
+
+    static async handleSubmit(event) {
+        event.preventDefault();
+        const form = event.target;
+        const mood = form.querySelector('input[name="feedback-mood"]:checked');
+        const comment = form.querySelector("#feedback-comment");
+        const moodValue = mood ? Number(mood.value) : null;
+        const commentText = (comment?.value || "").trim();
+
+        const submitBtn = form.querySelector(".feedback-submit");
+        if (submitBtn) {
+            submitBtn.textContent = "Sending...";
+            submitBtn.disabled = true;
+        }
+
+        const sent = await FeedbackWidget.sendToAdmin({
+            mood: moodValue,
+            comment: commentText,
+        });
+
+        if (!sent) {
+            if (submitBtn) {
+                submitBtn.textContent = "Retry Send";
+                submitBtn.disabled = false;
+            }
+            alert("Unable to send feedback right now. Please try again.");
+            return;
+        }
+
+        if (submitBtn) {
+            submitBtn.textContent = "Sent — thanks!";
+            setTimeout(() => {
+                submitBtn.textContent = "Give Feedback";
+                submitBtn.disabled = false;
+            }, 2200);
+        }
+
+        // Persist submitted state so the floating tab disappears permanently
+        FeedbackWidget.setState("submitted");
+        FeedbackWidget.hideForever();
+
+        // Clear fields for next time
+        if (mood) mood.checked = false;
+        if (comment) comment.value = "";
+    }
+
+    static open() {
+        if (FeedbackWidget.getState() === "submitted") {
+            FeedbackWidget.hideForever(true);
+            return;
+        }
+        if (!this.modal || !this.backdrop || !this.toggleButton) return;
+        this.modal.classList.add("is-open");
+        this.backdrop.classList.add("is-open");
+        this.toggleButton.classList.remove("is-visible");
+        this.setState("open");
+    }
+
+    static collapse(persistState = true) {
+        if (!this.modal || !this.backdrop || !this.toggleButton) return;
+        this.modal.classList.remove("is-open");
+        this.backdrop.classList.remove("is-open");
+        this.toggleButton.classList.add("is-visible");
+        if (persistState) this.setState("collapsed");
+    }
+
+    static restoreState() {
+        const saved = this.getState();
+        if (saved === "submitted") {
+            this.hideForever(true);
+            return;
+        }
+        if (saved === "collapsed") {
+            this.collapse();
+        } else {
+            // Show after a short delay to avoid instant harassment
+            setTimeout(() => {
+                if (FeedbackWidget.getState() !== "collapsed") {
+                    FeedbackWidget.open();
+                }
+            }, 3800);
+        }
+    }
+
+    static getState() {
+        try {
+            return localStorage.getItem(this.storageKey);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    static setState(state) {
+        try {
+            localStorage.setItem(this.storageKey, state);
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    static hideForever(skipPersist = false) {
+        if (!skipPersist) this.setState("submitted");
+        if (this.modal) {
+            this.modal.classList.remove("is-open");
+            this.modal.style.display = "none";
+        }
+        if (this.backdrop) {
+            this.backdrop.classList.remove("is-open");
+            this.backdrop.style.display = "none";
+        }
+        if (this.toggleButton) {
+            this.toggleButton.classList.add("is-hidden");
+            this.toggleButton.classList.remove("is-visible");
+        }
+    }
+
+    static async sendToAdmin(payload) {
+        if (!this.receiverId || !window.supabase) return false;
+        const parts = [];
+        if (typeof payload.mood === "number") parts.push(`mood=${payload.mood}`);
+        if (payload.comment) parts.push(`comment="${payload.comment.slice(0, 400)}"`);
+        const message = parts.length > 0 ? parts.join(" | ") : "No details provided";
+
+        try {
+            const { error } = await supabase.from("notifications").insert({
+                user_id: this.receiverId,
+                type: "feedback",
+                message: `Anonymous feedback: ${message}`,
+                read: false,
+                link: null,
+            });
+            if (error) throw error;
+            return true;
+        } catch (err) {
+            console.error("Feedback send error", err);
+            return false;
+        }
+    }
+}
+
 // Initialisation automatique
 document.addEventListener('DOMContentLoaded', () => {
     NavigationEnhancer.init();
     InteractionEnhancer.init();
     LoadingFeedback.init();
     PerformanceOptimizer.init();
+    FeedbackWidget.init();
     
     // Ajouter un délai pour s'assurer que tous les autres scripts sont chargés
     setTimeout(() => {
