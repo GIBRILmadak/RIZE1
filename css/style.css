@@ -412,13 +412,6 @@ nav {
     position: relative;
 }
 
-/* Hide demo video block and watch CTA */
-.hero-media,
-#hero-watch-btn,
-.hero-secondary {
-    display: none;
-}
-
 .hero-video-shell {
     background: rgba(255,255,255,0.03);
     border: 1px solid var(--border-color);
@@ -494,6 +487,9 @@ nav {
         gap: 1.25rem;
     }
     .hero-media {
+        display: none;
+    }
+    #hero-watch-btn {
         display: none;
     }
     .hero-actions {

@@ -365,6 +365,13 @@
                         return;
                     }
                     try {
+                        heroVideo.controls = true;
+                        heroVideo.muted = false;
+                        if (heroUnmute) {
+                            heroUnmute.textContent = "🔊 Mute sound";
+                            heroUnmute.setAttribute("aria-pressed", "true");
+                        }
+                        // Fullscreen first for better UX, then play with sound
                         if (heroVideo.requestFullscreen) {
                             await heroVideo.requestFullscreen();
                         } else if (heroVideo.webkitRequestFullscreen) {
