@@ -3811,3 +3811,72 @@ html.light-mode .btn-theme-toggle:hover {
     transform: scale(1.05);
     opacity: 0.9;
 }
+
+/* Influence & Reach */
+.influence-section {
+    margin: 2rem 0;
+}
+
+.influence-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+}
+
+.influence-card {
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    min-height: 160px;
+}
+
+.influence-card h4 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.influence-card .stat-block {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+}
+
+.influence-card .stat-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+}
+
+.influence-card .stat-label {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.influence-card .connect-btn {
+    margin-top: auto;
+    padding: 0.55rem 0.9rem;
+    border-radius: 10px;
+    border: 1px dashed var(--border-color);
+    background: rgba(255,255,255,0.03);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.influence-card.connected {
+    border-color: rgba(255,255,255,0.2);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+
+.influence-card .sp-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid rgba(255,255,255,0.15);
+    display: none;
+}

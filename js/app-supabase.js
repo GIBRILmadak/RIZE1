@@ -5841,6 +5841,7 @@ async function renderProfileTimeline(userId) {
     const followerCount = await getFollowerCount(userId);
     const followingCount = await getFollowingCount(userId);
     const engagementTotals = await getUserEngagementTotals(userId);
+    const userTraces = getUserContentLocal(userId) || [];
     const showVerificationCta = isOwnProfile && !isCurrentUserVerified();
     const verificationCtaHtml = showVerificationCta
         ? `
@@ -5868,23 +5869,17 @@ async function renderProfileTimeline(userId) {
     const engagementStatsHtml = `
         <div class="follow-section" style="margin-top: 0.5rem;">
             <div class="follower-stat">
+                <div class="follower-stat-count">${followerCount}</div>
+                <div class="follower-stat-label">Abonnés</div>
+            </div>
+            <div class="follower-stat">
                 <div class="follower-stat-count">${engagementTotals.totalViews}</div>
                 <div class="follower-stat-label">Vues totales</div>
             </div>
             <div class="follower-stat">
-                <div class="follower-stat-count">${engagementTotals.totalEncouragements}</div>
-                <div class="follower-stat-label">Encouragements reçus</div>
+                <div class="follower-stat-count">${userTraces.length}</div>
+                <div class="follower-stat-label">Traces</div>
             </div>
-            ${
-                isCommunityAccount
-                    ? ""
-                    : `
-            <div class="follower-stat">
-                <div class="follower-stat-count">${engagementTotals.totalStreamViewers}</div>
-                <div class="follower-stat-label">Viewers de streams</div>
-            </div>
-            `
-            }
         </div>
     `;
 
@@ -6285,6 +6280,26 @@ async function renderProfileTimeline(userId) {
         `
             : "";
 
+    const hasArcs = Array.isArray(userArcs) && userArcs.length > 0;
+
+    const weeklyChartHtml = `
+        <div class="weekly-progress-card" style="margin: 1.5rem 0; background: var(--surface-color); border: 1px solid var(--border-color); border-radius: 14px; padding: 1.25rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+                <div>
+                    <h4 style="margin:0;">Progression hebdomadaire</h4>
+                    <p style="margin:0; color: var(--text-secondary); font-size:0.9rem;">Survolez pour voir les traces par jour.</p>
+                </div>
+                ${hasArcs ? "" : `<button class="btn-secondary" onclick="window.openCreateModal && window.openCreateModal()" style="padding:0.45rem 0.8rem; border-radius:10px;">Créer un ARC</button>`}
+            </div>
+            <div style="margin-top:1rem; min-height:220px;">
+                ${hasArcs || userTraces.length > 0
+                    ? `<canvas id="weekly-progress-chart-${userId}" aria-label="Progression hebdomadaire" role="img"></canvas>`
+                    : `<div style="padding:1rem; color: var(--text-secondary);">Pas encore d'ARC ? <a href="#" onclick="window.openCreateModal && window.openCreateModal(); return false;">Créez-en un</a> pour débloquer votre trajectoire.</div>`
+                }
+            </div>
+        </div>
+    `;
+
     const profileHtml = `
         ${bannerHtml}
         <div class="profile-hero">
@@ -6347,6 +6362,37 @@ async function renderProfileTimeline(userId) {
         ${arcsHtml}
         ${collabRequestsHtml}
         ${projectsHtml}
+        ${weeklyChartHtml}
+        <section class="influence-section">
+            <h3 class="section-title">Influence & Reach</h3>
+            <div class="influence-grid">
+                <div class="influence-card" id="yt-card">
+                    <h4>YouTube</h4>
+                    <div class="stat-block">
+                        <div>
+                            <div class="stat-value subs">--</div>
+                            <div class="stat-label subs">Subscribers</div>
+                        </div>
+                        <div>
+                            <div class="stat-value views">--</div>
+                            <div class="stat-label views">Views</div>
+                        </div>
+                    </div>
+                    <button class="connect-btn" data-connect="yt">Connect YouTube</button>
+                </div>
+                <div class="influence-card" id="sp-card">
+                    <h4>Spotify</h4>
+                    <div style="display:flex; align-items:center; gap:0.6rem;">
+                        <img class="sp-avatar" alt="Spotify avatar">
+                        <div>
+                            <div class="stat-value followers">--</div>
+                            <div class="stat-label followers">Followers</div>
+                        </div>
+                    </div>
+                    <button class="connect-btn" data-connect="spotify">Connect Spotify</button>
+                </div>
+            </div>
+        </section>
         <div class="profile-analytics-section ${!isOwnProfile ? "compact" : ""}" style="margin: 2.5rem 0;">
             <h3 class="section-title">Analytics mensuelles</h3>
             <div id="profile-analytics" class="analytics-dashboard ${!isOwnProfile ? "analytics-dashboard-compact" : ""}" style="padding: 0; margin: 0; max-width: 100%;"></div>
@@ -6407,6 +6453,8 @@ async function renderProfileIntoContainer(userId) {
     profileContainer.classList.toggle("arc-view", !!window.selectedArcId);
     if (window.loadUserArcs) window.loadUserArcs(userId);
     if (window.renderProfileAnalytics) window.renderProfileAnalytics(userId);
+    if (window.renderWeeklyProgressChart) window.renderWeeklyProgressChart(userId);
+    if (window.renderInfluenceReach) window.renderInfluenceReach(userId);
     maybeShowAmbassadorWelcome(userId);
 }
 
@@ -6418,6 +6466,102 @@ function getProfileLoadingMarkup() {
         </div>
     `;
 }
+
+// Weekly progress chart (simple client-side aggregation)
+window.renderWeeklyProgressChart = async function (userId) {
+    try {
+        const canvas = document.getElementById(`weekly-progress-chart-${userId}`);
+        if (!canvas || typeof Chart === "undefined") return;
+
+        // Destroy existing chart instance if any
+        if (!window._weeklyCharts) window._weeklyCharts = new Map();
+        const existing = window._weeklyCharts.get(userId);
+        if (existing) {
+            existing.destroy();
+            window._weeklyCharts.delete(userId);
+        }
+
+        const traces = getUserContentLocal(userId) || [];
+        if (traces.length === 0) return;
+
+        // Build last 7 day labels using created_at when available, else fallback to dayNumber
+        const now = new Date();
+        const days = [];
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date(now);
+            d.setDate(now.getDate() - i);
+            const key = d.toISOString().slice(0, 10);
+            days.push(key);
+        }
+
+        const counts = Object.fromEntries(days.map((d) => [d, 0]));
+        traces.forEach((t) => {
+            const raw = t.created_at || t.createdAt || null;
+            let key = null;
+            if (raw) {
+                const d = new Date(raw);
+                if (!isNaN(d)) key = d.toISOString().slice(0, 10);
+            }
+            if (!key && typeof t.dayNumber === "number") {
+                // Map dayNumber to recent days: assume dayNumber 1 = today - (maxDay-1)
+                const maxDay = Math.max(...traces.map((c) => c.dayNumber || 0));
+                const offset = maxDay - t.dayNumber;
+                const d = new Date(now);
+                d.setDate(now.getDate() - offset);
+                key = d.toISOString().slice(0, 10);
+            }
+            if (key && counts[key] !== undefined) counts[key] += 1;
+        });
+
+        const labels = days.map((d) => {
+            const dt = new Date(d);
+            return dt.toLocaleDateString(undefined, { weekday: "short" });
+        });
+        const data = days.map((d) => counts[d]);
+
+        const chart = new Chart(canvas.getContext("2d"), {
+            type: "bar",
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: "Traces / jour",
+                        data,
+                        backgroundColor: "rgba(255,255,255,0.2)",
+                        borderColor: "rgba(255,255,255,0.6)",
+                        borderWidth: 1.5,
+                        borderRadius: 6,
+                        hoverBackgroundColor: "rgba(255,255,255,0.35)",
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { stepSize: 1 },
+                        grid: { color: "rgba(255,255,255,0.05)" },
+                    },
+                    x: { grid: { display: false } },
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => `${ctx.parsed.y || 0} trace(s)`,
+                        },
+                    },
+                },
+            },
+        });
+
+        window._weeklyCharts.set(userId, chart);
+    } catch (error) {
+        console.error("Weekly progress chart error:", error);
+    }
+};
 
 /* ========================================
    NAVIGATION
@@ -7761,7 +7905,7 @@ async function openCreateMenu(
     const title = isEdit ? "Modifier la Trace" : "Nouvelle Trace";
     const subtitle = isEdit
         ? `Modifier la trace du jour ${nextDay}`
-        : `Documentez votre progression du jour ${nextDay}`;
+        : `Trace = mise à jour rapide (texte + photo optionnelle). Annonce = étape majeure partagée publiquement.`;
 
     const existingRawDesc =
         (existingContent && (existingContent.rawDescription || existingContent.description)) ||
@@ -7790,7 +7934,7 @@ async function openCreateMenu(
                         <button type="button" class="${isAnnouncementEdit ? "" : "active"}" data-mode="trace">Trace</button>
                         <button type="button" class="${isAnnouncementEdit ? "active" : ""}" data-mode="announcement">Annonce</button>
                     </div>
-                    <p class="form-hint">Les annonces (post texte) acceptent une image optionnelle et peuvent recevoir des réponses.</p>
+                    <p class="form-hint">Trace : mise à jour rapide (texte + photo optionnelle). Annonce : étape majeure partagée publiquement.</p>
                 </div>
                 
                 <div class="form-group form-group-day">
