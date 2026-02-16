@@ -980,6 +980,26 @@ async function ensureUserProfile(user) {
         const profileResult = await getUserProfile(user.id);
 
         if (!profileResult.success) {
+            const errCode = profileResult.code || "";
+            const errMsg = (profileResult.error || "").toLowerCase();
+            const isNotFound =
+                errCode === "PGRST116" ||
+                errCode === "PGRST302" ||
+                errMsg.includes("no rows") ||
+                errMsg.includes("row") ||
+                errMsg.includes("not found");
+            // Si c'est un autre type d'erreur (ex: RLS, réseau), ne pas écraser le profil existant
+            if (!isNotFound) {
+                const cached =
+                    (window.allUsers || []).find(
+                        (u) => u && u.id === user.id,
+                    ) || null;
+                if (cached) return cached;
+                console.warn(
+                    "Profil non chargé (erreur non critique), on conserve l'état local.",
+                );
+                return null;
+            }
             // Créer un nouveau profil
             const username =
                 user.user_metadata?.username || user.email.split("@")[0];
@@ -1003,6 +1023,14 @@ async function ensureUserProfile(user) {
 
             if (createResult.success) {
                 console.log("Profil utilisateur créé avec succès");
+                try {
+                    sessionStorage.setItem(
+                        `xera:last-profile:${user.id}`,
+                        JSON.stringify(createResult.data),
+                    );
+                } catch (e) {
+                    /* ignore */
+                }
                 return createResult.data;
             } else {
                 console.error("Erreur création profil:", createResult.error);
@@ -1010,10 +1038,26 @@ async function ensureUserProfile(user) {
             }
         } else {
             console.log("Profil utilisateur trouvé");
+            try {
+                sessionStorage.setItem(
+                    `xera:last-profile:${user.id}`,
+                    JSON.stringify(profileResult.data),
+                );
+            } catch (e) {
+                /* ignore */
+            }
             return profileResult.data;
         }
     } catch (error) {
         console.error("Erreur ensureUserProfile:", error);
+        try {
+            const cached = sessionStorage.getItem(
+                `xera:last-profile:${user.id}`,
+            );
+            if (cached) return JSON.parse(cached);
+        } catch (e) {
+            /* ignore */
+        }
         return null;
     }
 }

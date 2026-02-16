@@ -4,6 +4,7 @@
 
 let notificationChannel = null;
 let notifications = [];
+const NOTIF_PERMISSION_KEY = "xera-notif-permission-requested";
 
 // Initialiser les notifications
 async function initializeNotifications() {
@@ -17,6 +18,9 @@ async function initializeNotifications() {
     
     // Mettre à jour le badge
     updateNotificationBadge();
+
+    // Demander la permission navigateur (une seule fois)
+    requestBrowserNotificationPermission();
 }
 
 // Charger les notifications existantes
@@ -67,6 +71,9 @@ function handleNewNotification(notification) {
     
     // Afficher une notification toast
     showNotificationToast(notification);
+
+    // Afficher une notification navigateur si permis
+    showBrowserNotification(notification);
     
     // Mettre à jour le badge
     updateNotificationBadge();
@@ -137,6 +144,49 @@ function getNotificationTitle(notification) {
         achievement: 'Succès débloqué'
     };
     return titles[notification.type] || 'Notification';
+}
+
+// Demander la permission de notifications navigateur (non bloquant)
+function requestBrowserNotificationPermission(force = false) {
+    if (typeof window === "undefined" || typeof Notification === "undefined")
+        return;
+    if (Notification.permission === "granted") return;
+    const alreadyAsked = localStorage.getItem(NOTIF_PERMISSION_KEY) === "1";
+    if (Notification.permission === "denied") return; // respect user choice
+    if (alreadyAsked && !force) return;
+    try {
+        Notification.requestPermission().then((res) => {
+            localStorage.setItem(NOTIF_PERMISSION_KEY, "1");
+            if (res !== "granted") {
+                console.info("Notifications navigateur non autorisées.");
+            }
+        });
+    } catch (e) {
+        console.warn("Notification permission request failed", e);
+    }
+}
+
+// Afficher une notification navigateur (lorsque l'onglet est ouvert)
+function showBrowserNotification(notification) {
+    if (typeof window === "undefined" || typeof Notification === "undefined")
+        return;
+    if (Notification.permission !== "granted") return;
+
+    const title = getNotificationTitle(notification);
+    const body = notification.message || "";
+    const icon = "icons/logo.png";
+    try {
+        const n = new Notification(title, { body, icon, tag: notification.id });
+        n.onclick = () => {
+            window.focus();
+            if (notification.link) {
+                window.location.href = notification.link;
+            }
+            n.close();
+        };
+    } catch (e) {
+        console.warn("Browser notification error:", e);
+    }
 }
 
 // Mettre à jour le badge de notifications

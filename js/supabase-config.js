@@ -216,7 +216,7 @@ async function getUserProfile(userId) {
     
     if (error) {
         console.error('Erreur récupération profil:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error.message, code: error.code };
     }
     
     return { success: true, data: data };
