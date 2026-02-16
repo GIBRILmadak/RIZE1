@@ -142,7 +142,7 @@ function toggleMode(keepMessages = false) {
         if (isSignUpMode) {
             // Mode inscription
             if (formTitle) formTitle.textContent = 'Créer votre compte';
-            if (formSubtitle) formSubtitle.textContent = 'Rejoignez la communauté RIZE';
+            if (formSubtitle) formSubtitle.textContent = 'Rejoignez la communauté XERA';
             if (usernameGroup) usernameGroup.style.display = 'block';
             if (confirmPasswordGroup) confirmPasswordGroup.style.display = 'block';
             if (forgotPasswordLink) forgotPasswordLink.style.display = 'none';
@@ -154,7 +154,7 @@ function toggleMode(keepMessages = false) {
             if (confirmPasswordInput) confirmPasswordInput.required = true;
         } else {
             // Mode connexion
-            if (formTitle) formTitle.textContent = 'Bienvenue sur RIZE';
+            if (formTitle) formTitle.textContent = 'Bienvenue sur XERA';
             if (formSubtitle) formSubtitle.textContent = 'Connectez-vous pour continuer';
             if (usernameGroup) usernameGroup.style.display = 'none';
             if (confirmPasswordGroup) confirmPasswordGroup.style.display = 'none';

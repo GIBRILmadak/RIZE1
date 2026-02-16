@@ -1,5 +1,5 @@
 /* ========================================
-   AMÉLIORATIONS STREAM - RIZE
+   AMÉLIORATIONS STREAM - XERA
    Chat amélioré, actions interactives, plein écran
    ======================================== */
 
@@ -72,11 +72,11 @@ class StreamActionsManager {
             if (navigator.share) {
                 try {
                     await navigator.share({
-                        title: 'Live Stream sur RIZE',
-                        text: 'Regardez ce live stream sur RIZE !',
+                        title: 'Live Stream sur XERA',
+                        text: 'Regardez ce live stream sur XERA !',
                         url: url
                     });
-                    ToastManager.success('Partagé', 'Merci de faire connaître RIZE !');
+                    ToastManager.success('Partagé', 'Merci de faire connaître XERA !');
                 } catch (err) {
                     if (err.name !== 'AbortError') {
                         this.fallbackShare(url);

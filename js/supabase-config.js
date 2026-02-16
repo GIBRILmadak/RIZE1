@@ -451,6 +451,22 @@ async function isFollowing(followerId, followingId) {
     return data !== null;
 }
 
+// Récupérer la liste des followers d'un utilisateur (ids uniquement)
+async function getFollowerIds(userId) {
+    try {
+        const { data, error } = await supabase
+            .from('followers')
+            .select('follower_id')
+            .eq('following_id', userId);
+
+        if (error) throw error;
+        return (data || []).map((row) => row.follower_id).filter(Boolean);
+    } catch (error) {
+        console.error('Erreur récupération followers ids:', error);
+        return [];
+    }
+}
+
 // Compter les followers
 async function getFollowerCount(userId) {
     const { count, error } = await supabase

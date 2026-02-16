@@ -1,5 +1,5 @@
 /* ========================================
-   AMÉLIORATIONS GLOBALES APP - RIZE
+   AMÉLIORATIONS GLOBALES APP - XERA
    Navigation fluide, feedbacks visuels, interactions
    ======================================== */
 
@@ -479,8 +479,12 @@ class FeedbackWidget {
         // Receiver for admin review (fallback to known super admin UUID)
         this.receiverId = (typeof SUPER_ADMIN_ID !== "undefined" && SUPER_ADMIN_ID) ||
             "b0f9f893-1706-4721-899c-d26ad79afc86";
+        this.actionCountKey = "rize_feedback_actions";
+        this.threshold = 10;
+        this.shownAfterThreshold = false;
         this.createElements();
         this.bindEvents();
+        this.trackUserActions();
         this.restoreState();
     }
 
@@ -497,7 +501,7 @@ class FeedbackWidget {
         this.modal.innerHTML = `
             <div class="feedback-header">
                 <p class="feedback-eyebrow">Quick pulse</p>
-                <h3>What do you think of RIZE?</h3>
+                <h3>What do you think of XERA?</h3>
                 <p class="feedback-sub">Your feedback helps us build faster.</p>
             </div>
             <form id="feedback-form" class="feedback-form">
@@ -614,12 +618,11 @@ class FeedbackWidget {
         if (saved === "collapsed") {
             this.collapse();
         } else {
-            // Show after a short delay to avoid instant harassment
+            // Defer auto-open: only after user engagement (handled by action tracker)
+            // If already above threshold when loading, trigger once after short delay
             setTimeout(() => {
-                if (FeedbackWidget.getState() !== "collapsed") {
-                    FeedbackWidget.open();
-                }
-            }, 3800);
+                FeedbackWidget.maybeTriggerOpen();
+            }, 500);
         }
     }
 
@@ -655,20 +658,55 @@ class FeedbackWidget {
         }
     }
 
-    static async sendToAdmin(payload) {
-        if (!this.receiverId || !window.supabase) return false;
-        const parts = [];
-        if (typeof payload.mood === "number") parts.push(`mood=${payload.mood}`);
-        if (payload.comment) parts.push(`comment="${payload.comment.slice(0, 400)}"`);
-        const message = parts.length > 0 ? parts.join(" | ") : "No details provided";
-
+    static trackUserActions() {
         try {
-            const { error } = await supabase.from("notifications").insert({
-                user_id: this.receiverId,
-                type: "feedback",
-                message: `Anonymous feedback: ${message}`,
-                read: false,
-                link: null,
+            this.actionCount =
+                parseInt(sessionStorage.getItem(this.actionCountKey) || "0", 10) ||
+                0;
+        } catch (e) {
+            this.actionCount = 0;
+        }
+        document.addEventListener(
+            "click",
+            (e) => {
+                const withinFeedback =
+                    e.target.closest &&
+                    e.target.closest("#feedback-modal, #feedback-toggle");
+                if (withinFeedback) return;
+                FeedbackWidget.incrementActions();
+            },
+            { capture: true },
+        );
+    }
+
+    static incrementActions() {
+        this.actionCount = (this.actionCount || 0) + 1;
+        try {
+            sessionStorage.setItem(this.actionCountKey, String(this.actionCount));
+        } catch (e) {
+            /* ignore */
+        }
+        this.maybeTriggerOpen();
+    }
+
+    static maybeTriggerOpen() {
+        if (this.shownAfterThreshold) return;
+        const state = this.getState();
+        if (state === "submitted" || state === "collapsed") return;
+        if ((this.actionCount || 0) >= this.threshold) {
+            this.shownAfterThreshold = true;
+            this.open();
+        }
+    }
+
+    static async sendToAdmin(payload) {
+        if (!window.supabase) return false;
+        try {
+            const { error } = await supabase.from("feedback_inbox").insert({
+                mood: typeof payload.mood === "number" ? payload.mood : null,
+                comment: payload.comment ? payload.comment.slice(0, 400) : null,
+                sender_user_id: window.currentUser?.id || null,
+                receiver_id: this.receiverId || null,
             });
             if (error) throw error;
             return true;

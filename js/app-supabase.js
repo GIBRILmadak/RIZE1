@@ -68,10 +68,10 @@ async function shareProfileLink(userId) {
     if (!userId) return;
     const user = getUser(userId);
     const url = buildProfileShareUrl(userId);
-    const title = user ? `Profil de ${user.name} | RIZE` : "Profil RIZE";
+    const title = user ? `Profil de ${user.name} | XERA` : "Profil XERA";
     const text = user
-        ? `Découvre le profil de ${user.name} sur RIZE.`
-        : "Découvre ce profil sur RIZE.";
+        ? `Découvre le profil de ${user.name} sur XERA.`
+        : "Découvre ce profil sur XERA.";
 
     if (navigator.share) {
         try {
@@ -550,6 +550,10 @@ async function initializeApp() {
             return;
         }
 
+        const heroVisibilityPromise = updateHeroVisibilityForUser(
+            user ? user.id : null,
+        );
+
         if (user) {
             window.currentUser = user;
             window.currentUserId = user.id;
@@ -561,8 +565,7 @@ async function initializeApp() {
             if (discoverAvailable) {
                 navigateTo("discover");
             }
-            await loadAllData();
-            await updateHeroVisibilityForUser(user.id);
+            await Promise.all([loadAllData(), heroVisibilityPromise]);
         } else if (savedSession) {
             if (typeof ToastManager !== "undefined") {
                 ToastManager.info(
@@ -574,12 +577,10 @@ async function initializeApp() {
                 SessionManager.clearSession();
             }
             updateNavigation(false);
-            await loadPublicData();
-            updateHeroVisibilityForUser(null);
+            await Promise.all([loadPublicData(), heroVisibilityPromise]);
         } else {
             updateNavigation(false);
-            await loadPublicData();
-            updateHeroVisibilityForUser(null);
+            await Promise.all([loadPublicData(), heroVisibilityPromise]);
         }
 
         if (skipLanding && discoverAvailable) {
@@ -644,23 +645,88 @@ function updateNavigation(isLoggedIn) {
 /* ========================================
    HERO VISIBILITY (Landing)
    ======================================== */
+const HERO_STATE = {
+    LOADING: "loading",
+    HIDDEN: "hidden",
+    VISIBLE: "visible",
+};
+const ARC_COUNT_CACHE_KEY_PREFIX = "rize:arc-count:";
+const ARC_COUNT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const userArcCounts = new Map();
+let heroStateSafetyTimeout = null;
+
+function setHeroState(state) {
+    const hero = document.getElementById("hero");
+    if (!hero) return;
+    hero.dataset.state = state;
+    hero.setAttribute("aria-busy", state === HERO_STATE.LOADING ? "true" : "false");
+    hero.style.display = state === HERO_STATE.HIDDEN ? "none" : "";
+
+    if (state === HERO_STATE.LOADING) {
+        clearTimeout(heroStateSafetyTimeout);
+        heroStateSafetyTimeout = setTimeout(() => {
+            // Fail-safe: avoid leaving the user with an empty viewport on very slow connections
+            if (hero.dataset.state === HERO_STATE.LOADING) {
+                hero.dataset.state = HERO_STATE.VISIBLE;
+                hero.style.display = "";
+                hero.setAttribute("aria-busy", "false");
+            }
+        }, 4000);
+    } else {
+        clearTimeout(heroStateSafetyTimeout);
+        heroStateSafetyTimeout = null;
+    }
+}
+
+function cacheArcCount(userId, count) {
+    userArcCounts.set(userId, count);
+    try {
+        sessionStorage.setItem(
+            `${ARC_COUNT_CACHE_KEY_PREFIX}${userId}`,
+            JSON.stringify({ count, ts: Date.now() }),
+        );
+    } catch (e) {
+        // sessionStorage can fail in some environments (Safari private mode)
+    }
+}
+
+function readArcCountFromCache(userId) {
+    if (userArcCounts.has(userId)) return userArcCounts.get(userId);
+    try {
+        const raw = sessionStorage.getItem(`${ARC_COUNT_CACHE_KEY_PREFIX}${userId}`);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (
+            typeof parsed?.count === "number" &&
+            typeof parsed?.ts === "number" &&
+            Date.now() - parsed.ts < ARC_COUNT_CACHE_TTL_MS
+        ) {
+            userArcCounts.set(userId, parsed.count);
+            return parsed.count;
+        }
+    } catch (e) {
+        return null;
+    }
+    return null;
+}
 
 async function getUserArcCount(userId) {
     if (!userId) return 0;
-    if (userArcCounts.has(userId)) return userArcCounts.get(userId);
+    const cached = readArcCountFromCache(userId);
+    if (cached !== null) return cached;
     try {
         const { count, error } = await supabase
             .from("arcs")
             .select("id", { count: "exact", head: true })
-            .eq("user_id", userId);
+            .eq("user_id", userId)
+            .limit(1);
         if (error) throw error;
         const c = count || 0;
-        userArcCounts.set(userId, c);
+        cacheArcCount(userId, c);
         return c;
     } catch (e) {
         console.error("Error fetching arc count:", e);
-        return 0;
+        return null;
     }
 }
 
@@ -669,11 +735,27 @@ async function updateHeroVisibilityForUser(userId) {
     if (!hero) return;
     // Not logged in -> show hero
     if (!userId) {
-        hero.style.display = "";
+        setHeroState(HERO_STATE.VISIBLE);
         return;
     }
+
+    const cached = readArcCountFromCache(userId);
+    if (cached !== null) {
+        setHeroState(cached > 0 ? HERO_STATE.HIDDEN : HERO_STATE.VISIBLE);
+        return cached;
+    }
+
+    setHeroState(HERO_STATE.LOADING);
     const count = await getUserArcCount(userId);
-    hero.style.display = count > 0 ? "none" : "";
+
+    if (count === null) {
+        // Keep content visible rather than flashing black if the count fails to load
+        setHeroState(HERO_STATE.VISIBLE);
+        return null;
+    }
+
+    setHeroState(count > 0 ? HERO_STATE.HIDDEN : HERO_STATE.VISIBLE);
+    return count;
 }
 
 /* ========================================
@@ -787,7 +869,7 @@ function ensureLoginPromptElements() {
     overlay.innerHTML = `
         <div class="login-prompt-card">
             <button class="login-prompt-close" aria-label="Fermer">✕</button>
-            <h3 class="login-prompt-title">Vous aimez RIZE ?</h3>
+            <h3 class="login-prompt-title">Vous aimez XERA ?</h3>
             <p class="login-prompt-text">
                 Connectez-vous et profitez sans interruption.
             </p>
@@ -1328,7 +1410,7 @@ async function maybeStartFirstPostFlow() {
     if (firstArcId) {
         const shouldOpenCreate =
             confirm(
-                "Bienvenue sur RIZE. Voulez-vous publier votre première trace maintenant ?",
+                "Bienvenue sur XERA. Voulez-vous publier votre première trace maintenant ?",
             ) === true;
         if (shouldOpenCreate) {
             openCreateMenu(userId, firstArcId);
@@ -1338,7 +1420,7 @@ async function maybeStartFirstPostFlow() {
 
     const shouldStartArc =
         confirm(
-            "Bienvenue sur RIZE. Pour publier votre première trace, commencez par créer votre premier ARC. Lancer la création maintenant ?",
+            "Bienvenue sur XERA. Pour publier votre première trace, commencez par créer votre premier ARC. Lancer la création maintenant ?",
         ) === true;
     if (!shouldStartArc) return;
 
@@ -1556,6 +1638,12 @@ async function toggleFollow(viewerId, targetUserId) {
             if (profileBtn) AnimationManager.bounceIn(profileBtn);
             if (cardBtn) AnimationManager.bounceIn(cardBtn);
             if (immersiveBtn) AnimationManager.bounceIn(immersiveBtn);
+            // Notification au suivi pour le propriétaire du profil
+            if (typeof notifyNewFollower === "function") {
+                notifyNewFollower(viewerId, targetUserId).catch((e) =>
+                    console.warn("Notify follower failed:", e),
+                );
+            }
         } else {
             ToastManager.info(
                 "Désabonnement",
@@ -1607,6 +1695,173 @@ async function toggleFollow(viewerId, targetUserId) {
             }
         }
     });
+}
+
+/* ========================================
+   NOTIFICATIONS SUIVEURS
+   ======================================== */
+
+function getCurrentUserDisplayName() {
+    const profile = getCurrentUserProfile();
+    return (
+        profile?.name ||
+        profile?.username ||
+        window.currentUser?.email ||
+        "Un membre XERA"
+    );
+}
+
+function safeProfileLink(userId) {
+    return userId ? buildProfileUrl(userId) : "profile.html";
+}
+
+async function notifyNewFollower(followerId, targetUserId) {
+    if (
+        typeof createNotification !== "function" ||
+        typeof getFollowerIds !== "function"
+    )
+        return;
+    try {
+        const followerName =
+            getCurrentUserDisplayName() || "Un nouveau membre";
+        await createNotification(
+            targetUserId,
+            "follow",
+            `${followerName} s'est abonné(e) à vous`,
+            safeProfileLink(followerId),
+        );
+    } catch (e) {
+        console.warn("notifyNewFollower error", e);
+    }
+}
+
+async function notifyFollowersOfTrace(contentRow) {
+    if (
+        !contentRow ||
+        typeof getFollowerIds !== "function" ||
+        typeof createNotification !== "function"
+    )
+        return;
+    const userId = contentRow.user_id || contentRow.userId;
+    if (!userId) return;
+    try {
+        const followerIds = await getFollowerIds(userId);
+        if (!followerIds.length) return;
+        const actorName = getCurrentUserDisplayName();
+        const message = `${actorName} a publié une nouvelle trace : ${contentRow.title || "Nouvelle mise à jour"}`;
+        const link = safeProfileLink(userId);
+        await Promise.allSettled(
+            followerIds
+                .filter((fid) => fid && fid !== userId)
+                .map((fid) =>
+                    createNotification(fid, "new_trace", message, link),
+                ),
+        );
+    } catch (e) {
+        console.warn("notifyFollowersOfTrace error", e);
+    }
+}
+
+async function notifyFollowersOfArcStart(arcRow) {
+    if (
+        !arcRow ||
+        typeof getFollowerIds !== "function" ||
+        typeof createNotification !== "function"
+    )
+        return;
+    const userId = arcRow.user_id;
+    if (!userId) return;
+    try {
+        const followerIds = await getFollowerIds(userId);
+        if (!followerIds.length) return;
+        const actorName = getCurrentUserDisplayName();
+        const message = `${actorName} a lancé un nouvel ARC : ${arcRow.title || "Nouvel ARC"}`;
+        const link = safeProfileLink(userId);
+        await Promise.allSettled(
+            followerIds
+                .filter((fid) => fid && fid !== userId)
+                .map((fid) =>
+                    createNotification(fid, "new_arc", message, link),
+                ),
+        );
+    } catch (e) {
+        console.warn("notifyFollowersOfArcStart error", e);
+    }
+}
+
+async function notifyFollowersOfLiveStart(contentRow, title) {
+    if (
+        !contentRow ||
+        typeof getFollowerIds !== "function" ||
+        typeof createNotification !== "function"
+    )
+        return;
+    const userId = contentRow.user_id || contentRow.userId;
+    if (!userId) return;
+    try {
+        const followerIds = await getFollowerIds(userId);
+        if (!followerIds.length) return;
+        const actorName = getCurrentUserDisplayName();
+        const liveTitle = title || contentRow.title || "Live en cours";
+        const link = contentRow.id
+            ? `stream.html?id=${contentRow.id}&host=${userId}`
+            : safeProfileLink(userId);
+        const message = `${actorName} a démarré un live : ${liveTitle}`;
+        await Promise.allSettled(
+            followerIds
+                .filter((fid) => fid && fid !== userId)
+                .map((fid) =>
+                    createNotification(fid, "live_start", message, link),
+                ),
+        );
+    } catch (e) {
+        console.warn("notifyFollowersOfLiveStart error", e);
+    }
+}
+
+async function fetchContentOwner(contentId) {
+    if (!contentId) return null;
+    // Try local cache first
+    const cached = findContentById(contentId);
+    if (cached) {
+        return {
+            user_id: cached.userId || cached.user_id,
+            title: cached.title,
+        };
+    }
+    try {
+        const { data, error } = await supabase
+            .from("content")
+            .select("id, user_id, title")
+            .eq("id", contentId)
+            .maybeSingle();
+        if (error) throw error;
+        return data || null;
+    } catch (e) {
+        console.warn("fetchContentOwner error", e);
+        return null;
+    }
+}
+
+async function notifyEncouragement(contentId) {
+    if (
+        !contentId ||
+        typeof createNotification !== "function" ||
+        typeof fetchContentOwner !== "function"
+    )
+        return;
+    const owner = await fetchContentOwner(contentId);
+    if (!owner || !owner.user_id) return;
+    const ownerId = owner.user_id;
+    if (ownerId === currentUser?.id) return; // Pas de notif pour soi-même
+    const actorName = getCurrentUserDisplayName();
+    const message = `${actorName} t'a encouragé sur "${owner.title || "ta trace"}"`;
+    const link = safeProfileLink(ownerId);
+    try {
+        await createNotification(ownerId, "encouragement", message, link);
+    } catch (e) {
+        console.warn("notifyEncouragement createNotification error", e);
+    }
 }
 
 /* ========================================
@@ -1723,6 +1978,10 @@ async function toggleCourage(contentId, btnElement) {
         if (willBeEncouraged) {
             const content = findContentById(contentId);
             updateImmersivePrefs(content, "like");
+            // Notifier l'auteur de la trace (sauf auto-encouragement)
+            notifyEncouragement(contentId).catch((e) =>
+                console.warn("notifyEncouragement error", e),
+            );
         }
     } catch (error) {
         console.error("Erreur toggleCourage:", error);
@@ -2190,6 +2449,17 @@ function getSuperAdminPanelHtml() {
                     <img src="icons/verify-personal.svg?v=2" alt="Badge" style="width:18px;height:18px;">
                 </a>
             </div>
+
+            <div class="verification-admin-block" style="margin-top: 1.5rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                    <h4 style="margin:0;">Feedback utilisateurs</h4>
+                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                        <button class="btn-verify" type="button" onclick="fetchFeedbackInbox()">Rafraîchir</button>
+                        <span style="color: var(--text-secondary); font-size: 0.85rem;">Flux anonyme → super admin</span>
+                    </div>
+                </div>
+                <div id="admin-feedback-list" class="admin-feedback-list" style="margin-top: 0.75rem; display:flex; flex-direction:column; gap:0.75rem;"></div>
+            </div>
         </div>
     `;
 }
@@ -2211,6 +2481,74 @@ function renderSuperAdminPage() {
         </div>
         ${getSuperAdminPanelHtml()}
     `;
+}
+
+async function fetchFeedbackInbox() {
+    const container = document.getElementById("admin-feedback-list");
+    if (!container) return;
+
+    if (!isSuperAdmin()) {
+        container.innerHTML = `<p style="color: var(--text-secondary);">Accès refusé.</p>`;
+        return;
+    }
+
+    container.innerHTML = `<div class="loading-spinner"></div>`;
+    try {
+        const { data, error } = await supabase
+            .from("feedback_inbox")
+            .select("id, created_at, mood, comment, sender_user_id")
+            .eq("receiver_id", SUPER_ADMIN_ID)
+            .order("created_at", { ascending: false })
+            .limit(200);
+        if (error) throw error;
+        renderFeedbackInboxList(data || []);
+    } catch (err) {
+        console.error("Erreur chargement feedback:", err);
+        container.innerHTML = `<p style="color: var(--text-secondary);">Impossible de charger les feedbacks.</p>`;
+    }
+}
+
+function renderFeedbackInboxList(items) {
+    const container = document.getElementById("admin-feedback-list");
+    if (!container) return;
+    if (!items.length) {
+        container.innerHTML = `<p style="color: var(--text-secondary);">Aucun feedback pour le moment.</p>`;
+        return;
+    }
+    container.innerHTML = items
+        .map((fb) => {
+            const mood = typeof fb.mood === "number" ? fb.mood : null;
+            const moodLabel =
+                mood === null
+                    ? "—"
+                    : mood >= 2
+                        ? "🤩"
+                        : mood === 1
+                            ? "🙂"
+                            : mood === 0
+                                ? "😐"
+                                : mood === -1
+                                    ? "😕"
+                                    : "😡";
+            const safeComment = fb.comment
+                ? fb.comment.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))
+                : "<i>—</i>";
+            const date = fb.created_at
+                ? new Date(fb.created_at).toLocaleString()
+                : "";
+            const sender = fb.sender_user_id || "Anonyme";
+            return `
+                <div class="admin-card" style="border:1px solid var(--border-color); border-radius:12px; padding:0.9rem; background: var(--surface-color); display:flex; flex-direction:column; gap:0.35rem;">
+                    <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap;">
+                        <span style="font-weight:700; display:flex; align-items:center; gap:0.4rem;">${moodLabel}<span style="color:var(--text-secondary); font-weight:500;">Satisfaction</span></span>
+                        <span style="color:var(--text-secondary); font-size:0.9rem;">${date}</span>
+                    </div>
+                    <div style="color:var(--text-primary); line-height:1.45;">${safeComment}</div>
+                    <div style="color:var(--text-secondary); font-size:0.9rem;">Sender: ${sender}</div>
+                </div>
+            `;
+        })
+        .join("");
 }
 
 async function fetchVerificationRequests() {
@@ -6409,7 +6747,7 @@ async function renderProfileTimeline(userId) {
                     <a href="index.html" style="color: var(--text-secondary); text-decoration: none; transition: color 0.3s;">Accueil</a>
                     <a href="credits.html" style="color: var(--text-secondary); text-decoration: none; transition: color 0.3s;">Crédits</a>
                 </div>
-                <p style="color: var(--text-muted); font-size: 0.9rem;">© 2026 RIZE - Documentez l'effort</p>
+                <p style="color: var(--text-muted); font-size: 0.9rem;">© 2026 XERA - Documentez l'effort</p>
             </div>
         </footer>
     `;
@@ -6950,7 +7288,7 @@ async function openSettings(userId) {
             <!-- Section Crédits -->
             <div style="margin-bottom: 2rem; padding: 1.5rem; background: rgba(59, 130, 246, 0.1); border-radius: 12px; border: 1px solid rgba(59, 130, 246, 0.2);">
                 <h3 style="margin-bottom: 0.5rem; color: var(--accent-color);">À propos</h3>
-                <p style="margin-bottom: 1rem; color: var(--text-secondary); font-size: 0.9rem;">Découvrez l'histoire derrière RIZE</p>
+                <p style="margin-bottom: 1rem; color: var(--text-secondary); font-size: 0.9rem;">Découvrez l'histoire derrière XERA</p>
                 <button type="button" class="settings-credits-btn" onclick="window.location.href='credits.html'" style="background: var(--accent-color); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem;">
                     Voir les crédits
                 </button>
@@ -7703,9 +8041,15 @@ async function startLiveStream() {
             '<span class="status-indicator live">● En direct</span>';
 
         // Créer une entrée de contenu live dans la base de données
-        await createLiveContent(title, description);
-
-        alert("✅ Live démarré ! Votre stream est maintenant en direct.");
+        const liveResult = await createLiveContent(title, description);
+        if (liveResult?.success && liveResult.data) {
+            notifyFollowersOfLiveStart(liveResult.data, title).catch((e) =>
+                console.warn("notifyFollowersOfLiveStart error", e),
+            );
+            alert("✅ Live démarré ! Votre stream est maintenant en direct.");
+        } else {
+            throw new Error(liveResult?.error || "Création live échouée");
+        }
     } catch (error) {
         console.error("Erreur démarrage live:", error);
         alert("Erreur lors du démarrage du live: " + error.message);
@@ -7755,8 +8099,10 @@ async function createLiveContent(title, description) {
     try {
         const result = await createContent(contentData);
         console.log("Contenu live créé:", result);
+        return result;
     } catch (error) {
         console.error("Erreur création contenu live:", error);
+        return { success: false, error: error.message };
     }
 }
 
@@ -8336,6 +8682,11 @@ async function openCreateMenu(
             }
 
             if (result.success) {
+                if (!isEdit && result.data) {
+                    notifyFollowersOfTrace(result.data).catch((e) =>
+                        console.warn("notifyFollowersOfTrace error", e),
+                    );
+                }
                 clearPendingCreatePostAfterArc();
                 // Recharger les données locales et rafraîchir l'interface
                 const contentResult = await getUserContent(userId);
@@ -8535,6 +8886,7 @@ window.editAdminAnnouncement = editAdminAnnouncement;
 window.cancelAdminAnnouncementEdit = cancelAdminAnnouncementEdit;
 window.renderSuperAdminPage = renderSuperAdminPage;
 window.fetchAdminAnnouncements = fetchAdminAnnouncements;
+window.fetchFeedbackInbox = fetchFeedbackInbox;
 window.fetchVerifiedBadges = fetchVerifiedBadges;
 window.fetchVerificationRequests = fetchVerificationRequests;
 window.getVerifiedBadgeSets = getVerifiedBadgeSets;

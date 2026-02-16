@@ -1,5 +1,5 @@
 /* ========================================
-   CREATE STREAM - RIZE
+   CREATE STREAM - XERA
    Gestion complète de la création de live stream
    ======================================== */
 

@@ -71,12 +71,12 @@ function buildAnalyticsShareUrl(userId) {
 }
 
 function formatAnalyticsShareLabel(state) {
-    if (!state) return 'Analytics RIZE';
+    if (!state) return 'Analytics XERA';
     const monthLabel = (state.year !== undefined && state.monthIndex !== undefined)
         ? formatMonthLabel(state.year, state.monthIndex)
         : '';
     const namePart = state.userName ? ` · ${state.userName}` : '';
-    return monthLabel ? `Analytics ${monthLabel}${namePart}` : `Analytics RIZE${namePart}`;
+    return monthLabel ? `Analytics ${monthLabel}${namePart}` : `Analytics XERA${namePart}`;
 }
 
 function buildSocialShareUrls({ url, text }) {
@@ -122,7 +122,7 @@ function renderAnalyticsSharePanel(containerId, state) {
 
     const url = buildAnalyticsShareUrl(state?.userId);
     const label = formatAnalyticsShareLabel(state);
-    const text = `Mes analytics${state?.userName ? ` · ${state.userName}` : ''} sur RIZE.`;
+    const text = `Mes analytics${state?.userName ? ` · ${state.userName}` : ''} sur XERA.`;
     const shareUrls = buildSocialShareUrls({ url, text });
 
     panel.innerHTML = `
@@ -193,10 +193,10 @@ async function shareAnalyticsChart(containerId) {
     const monthLabel = (state.year !== undefined && state.monthIndex !== undefined)
         ? formatMonthLabel(state.year, state.monthIndex)
         : '';
-    const title = monthLabel ? `Analytics · ${monthLabel}` : 'Analytics RIZE';
+    const title = monthLabel ? `Analytics · ${monthLabel}` : 'Analytics XERA';
     const text = monthLabel
-        ? `Mes analytics de ${monthLabel} sur RIZE.`
-        : `Mes analytics sur RIZE.`;
+        ? `Mes analytics de ${monthLabel} sur XERA.`
+        : `Mes analytics sur XERA.`;
     const url = buildAnalyticsShareUrl(state.userId);
 
     if (navigator.share) {

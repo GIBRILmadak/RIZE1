@@ -1,5 +1,5 @@
 /* ========================================
-   AMÉLIORATIONS UX - RIZE
+   AMÉLIORATIONS UX - XERA
    Indicateurs de chargement, persistance, animations
    ======================================== */
 

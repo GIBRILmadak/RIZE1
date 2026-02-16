@@ -422,6 +422,14 @@ async function handleCreateArc(e) {
             return;
         }
 
+        if (!arcId && createdArc && createdArc.id && typeof notifyFollowersOfArcStart === "function") {
+            notifyFollowersOfArcStart({
+                id: createdArc.id,
+                user_id: currentUser.id,
+                title: arcData.title,
+            }).catch((e) => console.warn("notifyFollowersOfArcStart error", e));
+        }
+
         alert(arcId ? "ARC mis à jour avec succès !" : "ARC créé avec succès !");
         closeCreateModal();
         e.target.reset();

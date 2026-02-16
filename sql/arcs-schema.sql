@@ -1,5 +1,5 @@
 -- ========================================
--- SCHÉMA POUR LES ARCS (RIZE)
+-- SCHÉMA POUR LES ARCS (XERA)
 -- ========================================
 
 -- Table des ARCs

@@ -111,6 +111,10 @@ function showNotificationToast(notification) {
 function getNotificationIcon(type) {
     const icons = {
         follow: '👤',
+        new_trace: '📝',
+        new_arc: '📈',
+        live_start: '🔴',
+        encouragement: '✨',
         like: '❤️',
         comment: '💬',
         mention: '@',
@@ -123,6 +127,10 @@ function getNotificationIcon(type) {
 function getNotificationTitle(notification) {
     const titles = {
         follow: 'Nouvel abonné',
+        new_trace: 'Nouvelle trace',
+        new_arc: 'Nouvel ARC',
+        live_start: 'Live en cours',
+        encouragement: 'Nouvel encouragement',
         like: 'Nouveau like',
         comment: 'Nouveau commentaire',
         mention: 'Mention',

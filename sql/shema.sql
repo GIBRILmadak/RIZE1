@@ -1,5 +1,5 @@
 -- ========================================
--- SCHÉMA DE BASE DE DONNÉES SUPABASE RIZE
+-- SCHÉMA DE BASE DE DONNÉES SUPABASE XERA
 -- ========================================
 
 -- Activer l'extension UUID

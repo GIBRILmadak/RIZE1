@@ -1,5 +1,5 @@
 -- ========================================
--- PRE-FLIGHT: premier post (RIZE)
+-- PRE-FLIGHT: premier post (XERA)
 -- ========================================
 -- A executer dans Supabase SQL Editor pour verifier la config minimale.
 

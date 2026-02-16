@@ -317,6 +317,54 @@ nav {
         linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0));
 }
 
+.hero[data-state="hidden"] {
+    display: none;
+}
+
+.hero[data-state="loading"] {
+    min-height: 520px;
+}
+
+.hero-loading {
+    position: absolute;
+    inset: 24px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015));
+    border: 1px solid var(--border-color);
+    display: none;
+    overflow: hidden;
+    z-index: 2;
+}
+
+.hero[data-state="loading"] .hero-loading {
+    display: block;
+}
+
+.hero[data-state="loading"] .hero-grid {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.hero-skel {
+    height: 14px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, rgba(255,255,255,0.08), rgba(255,255,255,0.16), rgba(255,255,255,0.08));
+    background-size: 180% 100%;
+    animation: heroShimmer 1.2s ease-in-out infinite;
+    margin-bottom: 10px;
+}
+
+.hero-skel-eyebrow { width: 26%; height: 12px; margin-top: 14px; }
+.hero-skel-title { width: 60%; height: 26px; }
+.hero-skel-lede { width: 72%; height: 14px; }
+.hero-skel-bullets { width: 78%; height: 16px; }
+.hero-skel-cta { width: 32%; height: 40px; border-radius: 12px; margin-top: 12px; }
+
+@keyframes heroShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
 .hero::after {
     content: "";
     position: absolute;
@@ -3297,7 +3345,7 @@ html.light-mode .btn-theme-toggle:hover {
         display: none;
     }
 
-    /* Masquer le logo RIZE sur la page discover pour les téléphones */
+    /* Masquer le logo XERA sur la page discover pour les téléphones */
     nav .logo {
         display: none !important;
     }

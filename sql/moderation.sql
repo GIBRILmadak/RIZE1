@@ -1,5 +1,5 @@
 -- ========================================
--- MODÉRATION + SUPER ADMIN (RIZE)
+-- MODÉRATION + SUPER ADMIN (XERA)
 -- ========================================
 
 -- Champs de modération
