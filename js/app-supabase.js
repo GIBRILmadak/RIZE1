@@ -5754,11 +5754,13 @@ function setupImmersiveSnapNav() {
     let isTouching = false;
 
     const getActiveIndex = (posts) => {
+        if (!posts.length) return 0;
         let closestIndex = 0;
         let minDistance = Infinity;
+        const viewportMid = window.innerHeight * 0.4;
         posts.forEach((post, index) => {
             const rect = post.getBoundingClientRect();
-            const distance = Math.abs(rect.top);
+            const distance = Math.abs(rect.top - viewportMid);
             if (distance < minDistance) {
                 minDistance = distance;
                 closestIndex = index;
@@ -5769,7 +5771,11 @@ function setupImmersiveSnapNav() {
 
     const scrollToIndex = (posts, index) => {
         if (!posts[index]) return;
-        posts[index].scrollIntoView({ behavior: "smooth", block: "start" });
+        posts[index].scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+            inline: "nearest",
+        });
     };
 
     overlay.addEventListener(
@@ -5855,7 +5861,11 @@ function setupImmersiveArrowNav() {
     overlay.dataset.arrowNavBound = "true";
 
     const getPosts = () =>
-        Array.from(document.querySelectorAll(".immersive-post"));
+        Array.from(
+            document.querySelectorAll(
+                ".immersive-post",
+            ),
+        ).filter((el) => el.offsetParent !== null); // skip hidden
 
     const getActiveIndex = (posts) => {
         let closestIndex = 0;
@@ -5893,6 +5903,7 @@ function setupImmersiveArrowNav() {
         const posts = getPosts();
         const idx = getActiveIndex(posts);
         scrollToIndex(posts, Math.max(0, idx - 1));
+        setTimeout(updateDisabled, 350);
     });
 
     btnDown.addEventListener("click", (e) => {
@@ -5900,6 +5911,7 @@ function setupImmersiveArrowNav() {
         const posts = getPosts();
         const idx = getActiveIndex(posts);
         scrollToIndex(posts, Math.min(posts.length - 1, idx + 1));
+        setTimeout(updateDisabled, 350);
     });
 
     let ticking = false;
