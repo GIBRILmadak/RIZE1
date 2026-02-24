@@ -3800,72 +3800,226 @@ function consumeUsersFromPool(pool, count, target) {
     return taken;
 }
 
-function buildChaoticDiscoverMix(users) {
-    const usersWithContent = (users || []).filter((u) => getLatestContent(u.id));
-    if (usersWithContent.length <= 2) return usersWithContent;
+/* ========================================
+   MOOD ENGINE (Discover)
+   ======================================== */
 
-    const verifiedPool = sortUsersByLatestRecency(
-        usersWithContent.filter((u) => isVerifiedDiscoverUser(u)),
-    );
-    const nonVerifiedPool = sortUsersByLatestRecency(
-        usersWithContent.filter((u) => !isVerifiedDiscoverUser(u)),
-    );
+const MOOD_STORAGE_KEY_PREFIX = "rize:mood:v1:";
+const MOOD_MAX_TAGS = 160;
 
-    if (verifiedPool.length === 0 || nonVerifiedPool.length === 0) {
-        return sortUsersByLatestRecency(usersWithContent);
+function sanitizeTag(tag) {
+    if (!tag) return null;
+    return tag.toString().trim().toLowerCase();
+}
+
+function loadMoodProfile(userId) {
+    if (!userId) return { tags: {}, updatedAt: Date.now() };
+    try {
+        const raw = localStorage.getItem(`${MOOD_STORAGE_KEY_PREFIX}${userId}`);
+        if (!raw) return { tags: {}, updatedAt: Date.now() };
+        const parsed = JSON.parse(raw);
+        return {
+            tags: parsed?.tags || {},
+            updatedAt: parsed?.updatedAt || Date.now(),
+        };
+    } catch (e) {
+        return { tags: {}, updatedAt: Date.now() };
     }
+}
 
-    let patterns = shuffleWithChaos(DISCOVER_VERIFIED_MIX_PATTERNS);
-    let patternIndex = 0;
-    let segmentIndex = 0;
-    let guard = 0;
-    const mixed = [];
+function saveMoodProfile(userId, profile) {
+    if (!userId || !profile) return;
+    try {
+        localStorage.setItem(
+            `${MOOD_STORAGE_KEY_PREFIX}${userId}`,
+            JSON.stringify(profile),
+        );
+    } catch (e) {
+        // ignore quota errors
+    }
+}
 
-    while (
-        (verifiedPool.length > 0 || nonVerifiedPool.length > 0) &&
-        guard < 5000
-    ) {
-        const pattern = patterns[patternIndex];
-        if (!pattern || pattern.length === 0) break;
-        const segment = pattern[segmentIndex];
-        if (!segment) break;
+function adjustMoodScores(tags = [], delta = 1) {
+    if (!currentUser || !Array.isArray(tags)) return;
+    const userId = currentUser.id;
+    const profile = loadMoodProfile(userId);
+    tags.map(sanitizeTag).filter(Boolean).forEach((tag) => {
+        profile.tags[tag] = (profile.tags[tag] || 0) + delta;
+    });
+    // trim to top tags only
+    const entries = Object.entries(profile.tags).sort(
+        (a, b) => (b[1] || 0) - (a[1] || 0),
+    );
+    const trimmed = entries.slice(0, MOOD_MAX_TAGS);
+    profile.tags = Object.fromEntries(trimmed);
+    profile.updatedAt = Date.now();
+    saveMoodProfile(userId, profile);
+}
 
-        const targetPool =
-            segment.kind === "verified" ? verifiedPool : nonVerifiedPool;
-        const fallbackPool =
-            segment.kind === "verified" ? nonVerifiedPool : verifiedPool;
+function getMoodTopTags(userId, limit = 3) {
+    const profile = loadMoodProfile(userId);
+    return Object.entries(profile.tags)
+        .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+        .slice(0, limit)
+        .map(([tag, score]) => ({ tag, score }));
+}
 
-        const pulled = consumeUsersFromPool(targetPool, segment.count, mixed);
-        if (pulled === 0) {
-            consumeUsersFromPool(fallbackPool, 1, mixed);
-        }
+function getMoodTagScoreMap(userId) {
+    const profile = loadMoodProfile(userId);
+    return profile.tags || {};
+}
 
-        segmentIndex += 1;
-        if (segmentIndex >= pattern.length) {
-            segmentIndex = 0;
-            patternIndex = (patternIndex + 1) % patterns.length;
-            if (patternIndex === 0) {
-                patterns = shuffleWithChaos(DISCOVER_VERIFIED_MIX_PATTERNS);
+function hasMoodMatch(itemTags = [], moodSet) {
+    if (!moodSet || moodSet.size === 0) return false;
+    return itemTags.some((t) => moodSet.has(sanitizeTag(t)));
+}
+
+function computeMoodRelevanceScore(item, prefsMap) {
+    const content = item.content || item.stream || {};
+    const tags = Array.isArray(content.tags) ? content.tags : [];
+    const tagScore = tags
+        .map(sanitizeTag)
+        .filter(Boolean)
+        .reduce((sum, tag) => sum + (prefsMap[tag] || 0), 0);
+
+    const createdAt = content.createdAt
+        ? new Date(content.createdAt).getTime()
+        : Date.now();
+    const ageHours = Math.max(0, (Date.now() - createdAt) / 36e5);
+    const recency = Math.exp(-ageHours / 72);
+
+    const engagement =
+        Math.log1p(content.encouragementsCount || 0) * 1.1 +
+        Math.log1p(content.views || 0) * 0.6;
+
+    const liveBoost = item.type === "live" ? 0.6 : 0;
+    return recency * 1.2 + tagScore * 1.1 + engagement + liveBoost;
+}
+
+function handleDiscoverInterest(contentId, action) {
+    const content = findContentById(contentId);
+    if (!content) return;
+    const tags = Array.isArray(content.tags) ? content.tags : [];
+    const delta = action === "dislike" ? -1.5 : 2.2;
+    adjustMoodScores(tags, delta);
+    if (action === "dislike") {
+        ToastManager?.info("Flux ajusté", "Nous vous montrerons moins ce sujet.");
+    } else {
+        ToastManager?.success("Noté", "Nous priorisons davantage ce sujet.");
+    }
+}
+window.handleDiscoverInterest = handleDiscoverInterest;
+
+function buildMoodDiscoverMix(users, liveStreams = []) {
+    const usersWithContent = (users || [])
+        .map((u) => ({ user: u, content: getLatestContent(u.id) }))
+        .filter((entry) => entry.content);
+
+    const liveItems = (liveStreams || [])
+        .map((stream) => {
+            const user = getUser(stream.user_id);
+            if (!user) return null;
+            return {
+                type: "live",
+                stream,
+                user,
+                verified: isVerifiedDiscoverUser(user),
+                tags: stream.tags || [],
+                content: {
+                    ...stream,
+                    createdAt: stream.created_at || stream.started_at || Date.now(),
+                    tags: stream.tags || [],
+                },
+            };
+        })
+        .filter(Boolean);
+
+    const allItems = usersWithContent.map((entry) => ({
+        type: "user",
+        user: entry.user,
+        content: entry.content,
+        verified: isVerifiedDiscoverUser(entry.user),
+        tags: Array.isArray(entry.content.tags) ? entry.content.tags : [],
+    }));
+
+    allItems.push(...liveItems);
+
+    const verifiedPool = allItems.filter((i) => i.verified);
+    const nonVerifiedPool = allItems.filter((i) => !i.verified);
+
+    const moodTop = getMoodTopTags(currentUser?.id, 3);
+    const moodSet = new Set(moodTop.map((t) => t.tag));
+    const prefsMap = getMoodTagScoreMap(currentUser?.id);
+
+    // Focus range 85-90% mood; remainder exploration
+    const focusRatio = 0.85 + Math.random() * 0.05;
+
+    function pickFromPool(pool) {
+        if (!pool || pool.length === 0) return null;
+
+        const wantsMood = moodSet.size > 0 && Math.random() < focusRatio;
+        let candidates = pool;
+
+        if (wantsMood) {
+            const moodMatches = pool.filter((item) =>
+                hasMoodMatch(item.tags || [], moodSet),
+            );
+            if (moodMatches.length > 0) {
+                candidates = moodMatches;
+            }
+        } else if (Math.random() < 0.5) {
+            // exploration path: favor items without the top mood to keep 10-15%
+            const nonMood = pool.filter(
+                (item) => !hasMoodMatch(item.tags || [], moodSet),
+            );
+            if (nonMood.length > 0) {
+                candidates = nonMood;
             }
         }
+
+        candidates.sort(
+            (a, b) =>
+                computeMoodRelevanceScore(b, prefsMap) -
+                computeMoodRelevanceScore(a, prefsMap),
+        );
+
+        const pick = candidates[0];
+        const idx = pool.indexOf(pick);
+        if (idx >= 0) pool.splice(idx, 1);
+        return pick;
+    }
+
+    const mixed = [];
+    let guard = 0;
+    while ((verifiedPool.length > 0 || nonVerifiedPool.length > 0) && guard < 5000) {
+        const takeVerified = Math.random() < 0.65;
+        let pool = takeVerified ? verifiedPool : nonVerifiedPool;
+        if (pool.length === 0) {
+            pool = takeVerified ? nonVerifiedPool : verifiedPool;
+        }
+        const next = pickFromPool(pool);
+        if (!next) break;
+        mixed.push(next);
         guard += 1;
     }
 
-    if (verifiedPool.length > 0) {
-        mixed.push(...verifiedPool);
-    }
-    if (nonVerifiedPool.length > 0) {
-        mixed.push(...nonVerifiedPool);
-    }
+    // Append leftovers (keeps ordering stable)
+    mixed.push(...verifiedPool);
+    mixed.push(...nonVerifiedPool);
 
     return mixed;
 }
 
-function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
+function renderUserCard(
+    userId,
+    isFollowing = false,
+    isEncouraged = false,
+    latestContentOverride = null,
+) {
     const user = getUser(userId);
     if (!user) return "";
 
-    const latestContent = getLatestContent(userId);
+    const latestContent = latestContentOverride || getLatestContent(userId);
     const dominantState = getDominantState(userId);
 
     if (!latestContent) return "";
@@ -3879,12 +4033,13 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
 
     const badgesHtml = renderUserBadges(userId);
 
+    const tags = Array.isArray(latestContent.tags) ? latestContent.tags : [];
     let mediaHtml = "";
     if (latestContent && latestContent.mediaUrl) {
         if (latestContent.type === "video") {
             mediaHtml = `
                 <div class="card-media-wrap">
-                    <video id="video-${userId}" class="card-media" src="${latestContent.mediaUrl}" muted playsinline webkit-playsinline autoplay preload="metadata" tabindex="-1" data-user-id="${userId}" disablePictureInPicture></video>
+                    <video id="video-${userId}" class="card-media" src="${latestContent.mediaUrl}" muted playsinline webkit-playsinline autoplay preload="metadata" tabindex="-1" data-user-id="${userId}" data-content-id="${latestContent.contentId}" disablePictureInPicture></video>
                     <div class="video-fallback">
                         <img src="icons/play.svg" alt="Play" width="40" height="40">
                         <span>Vidéo</span>
@@ -3900,7 +4055,7 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
         } else if (latestContent.type === "image" || latestContent.type === "text") {
             mediaHtml = `
                 <div class="card-media-wrap">
-                    <img class="card-media" src="${latestContent.mediaUrl}" alt="${latestContent.title || "Preview"}" loading="lazy" decoding="async">
+                    <img class="card-media" src="${latestContent.mediaUrl}" alt="${latestContent.title || "Preview"}" loading="lazy" decoding="async" data-content-id="${latestContent.contentId}">
                     <div class="card-stats-overlay">
                         <div class="stat-pill">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8  -4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -4078,8 +4233,16 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
             ? `<span class="status-day">J-${latestContent.dayNumber}</span>`
             : "";
 
+    const tagDataset =
+        tags.length > 0
+            ? tags
+                  .map(sanitizeTag)
+                  .filter(Boolean)
+                  .join(",")
+            : "";
+
     return `
-        <div class="${cardClass}" data-user="${userId}" onclick="openImmersive('${userId}', '${latestContent.contentId}')">
+        <div class="${cardClass}" data-user="${userId}" data-content-id="${latestContent.contentId}" data-tags="${tagDataset}" onclick="openImmersive('${userId}', '${latestContent.contentId}')">
             ${mediaHtml}
             <div class="card-content">
                 ${arcInfo}
@@ -4097,7 +4260,6 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
                         <span class="courage-count">${latestContent.encouragementsCount || 0}</span>
                     </button>
                 </div>
-                
                 ${userInfoHtml}
             </div>
         </div>
@@ -4581,32 +4743,15 @@ async function renderDiscoverGrid() {
     if (!grid) return;
     const waitMessage = document.querySelector(".wait");
 
-    let liveCardsHTML = "";
+    let liveStreams = [];
     try {
-        const liveStreams = await getLiveStreamsForDiscover();
-        if (liveStreams.length > 0) {
-            liveCardsHTML = liveStreams.map(renderLiveStreamCard).join("");
-        }
+        liveStreams = await getLiveStreamsForDiscover();
     } catch (error) {
         console.error("Erreur chargement lives discover:", error);
     }
 
-    const renderLiveOnly = () => {
-        if (!liveCardsHTML) return false;
-        grid.innerHTML = liveCardsHTML;
-        if (waitMessage) waitMessage.classList.add("is-hidden");
-        if (window.AnimationManager) {
-            setTimeout(() => {
-                AnimationManager.fadeInElements(".user-card", 150);
-            }, 100);
-        }
-        setupDiscoverVideoInteractions();
-        return true;
-    };
-
     // Afficher un état de chargement si les données ne sont pas encore là
     if (!window.hasLoadedUsers) {
-        if (renderLiveOnly()) return;
         if (
             window.LoadingStateManager &&
             typeof LoadingStateManager.showSpinner === "function"
@@ -4616,7 +4761,6 @@ async function renderDiscoverGrid() {
         return;
     }
     if (window.userLoadError) {
-        if (renderLiveOnly()) return;
         if (
             window.LoadingStateManager &&
             typeof LoadingStateManager.showEmptyState === "function"
@@ -4640,7 +4784,6 @@ async function renderDiscoverGrid() {
         return;
     }
     if (allUsers.length === 0) {
-        if (renderLiveOnly()) return;
         if (
             window.LoadingStateManager &&
             typeof LoadingStateManager.showEmptyState === "function"
@@ -4670,9 +4813,6 @@ async function renderDiscoverGrid() {
 
     // Tri de base par récence puis mélange pondéré vérifiés/non-vérifiés
     usersToDisplay = sortUsersByLatestRecency(usersToDisplay);
-    if (currentFilter === "all") {
-        usersToDisplay = buildChaoticDiscoverMix(usersToDisplay);
-    }
 
     const arcIdsForDiscover = usersToDisplay
         .map((u) => getLatestContent(u.id))
@@ -4682,74 +4822,54 @@ async function renderDiscoverGrid() {
         await preloadArcCollaborators(arcIdsForDiscover);
     }
 
+    // Personalized encouragement/follow status
+    const userContentMap = new Map();
+    const contentIds = [];
+    usersToDisplay.forEach((u) => {
+        const c = getLatestContent(u.id);
+        if (c) {
+            userContentMap.set(u.id, c);
+            contentIds.push(c.contentId);
+        }
+    });
+
+    let encouragedContentIds = new Set();
+    let followedSet = new Set();
     if (currentUser) {
-        // Collect all latest content IDs to check encouragements in one go
-        const contentIds = [];
-        const userContentMap = new Map();
-
-        usersToDisplay.forEach((u) => {
-            const c = getLatestContent(u.id);
-            if (c) {
-                contentIds.push(c.contentId);
-                userContentMap.set(u.id, c.contentId);
-            }
-        });
-
-        // Batch fetch encouragements
-        let encouragedContentIds = new Set();
+        followedSet = await getFollowedUserIdSet();
         if (contentIds.length > 0) {
-            const { data, error } = await supabase
+            const { data } = await supabase
                 .from("content_encouragements")
                 .select("content_id")
                 .eq("user_id", currentUser.id)
                 .in("content_id", contentIds);
-
             if (data) {
                 data.forEach((row) => encouragedContentIds.add(row.content_id));
             }
         }
-
-        // Une seule requête followers pour tout le rendu Discover.
-        const followedSet = await getFollowedUserIdSet();
-        const results = usersToDisplay.map((user) => {
-            const isFollowed = followedSet.has(user.id);
-            const contentId = userContentMap.get(user.id);
-            const isEncouraged = contentId
-                ? encouragedContentIds.has(contentId)
-                : false;
-            return { user, isFollowed, isEncouraged };
-        });
-
-        // Filter based on logic
-        if (currentFilter === "following") {
-            const following = results.filter((r) => r.isFollowed);
-            cardsHTML = following
-                .map((r) => renderUserCard(r.user.id, true, r.isEncouraged))
-                .join("");
-        } else {
-            // Render "All" but pass correct follow status
-            cardsHTML = results
-                .map((r) =>
-                    renderUserCard(r.user.id, r.isFollowed, r.isEncouraged),
-                )
-                .filter((h) => h !== "")
-                .join("");
-        }
-    } else {
-        // Not logged in
-        if (currentFilter === "following") {
-            cardsHTML =
-                '<div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-secondary);">Connectez-vous pour voir vos abonnements.</div>';
-        } else {
-            cardsHTML = usersToDisplay
-                .map((user) => renderUserCard(user.id, false, false))
-                .filter((h) => h !== "")
-                .join("");
-        }
     }
 
-    if (liveCardsHTML !== "" || cardsHTML !== "") {
-        grid.innerHTML = `${liveCardsHTML}${cardsHTML}`;
+    // Mood-based mix (includes lives)
+    const mixedItems = buildMoodDiscoverMix(usersToDisplay, liveStreams);
+    const renderItem = (item) => {
+        if (item.type === "live") {
+            return renderLiveStreamCard(item.stream);
+        }
+        const content = userContentMap.get(item.user.id);
+        const isFollowed = followedSet.has(item.user.id);
+        const isEncouraged = content
+            ? encouragedContentIds.has(content.contentId)
+            : false;
+        const respectFilter =
+            currentFilter === "following" ? isFollowed : true;
+        if (!respectFilter) return "";
+        return renderUserCard(item.user.id, isFollowed, isEncouraged, content);
+    };
+
+    cardsHTML = mixedItems.map(renderItem).filter(Boolean).join("");
+
+    if (cardsHTML !== "") {
+        grid.innerHTML = cardsHTML;
 
         if (waitMessage) {
             const hasCard = grid.querySelector(".user-card, .discover-card");
@@ -4767,6 +4887,7 @@ async function renderDiscoverGrid() {
         }
 
         setupDiscoverVideoInteractions();
+        initDiscoverMoodTracking();
         return;
     }
 
@@ -4809,6 +4930,7 @@ async function renderDiscoverGrid() {
     }
 
     setupDiscoverVideoInteractions();
+    initDiscoverMoodTracking();
 }
 
 /* ========================================
@@ -5247,6 +5369,19 @@ async function renderImmersiveFeed(contents) {
                     ? `<span class="step-indicator">Jour ${content.dayNumber}</span>`
                     : "";
 
+            const moodActionsHtml = `
+                <div class="mood-actions">
+                    <button class="mood-btn" onclick="event.stopPropagation(); handleDiscoverInterest('${content.contentId}', 'like')">Intéressé</button>
+                    <button class="mood-btn" onclick="event.stopPropagation(); handleDiscoverInterest('${content.contentId}', 'dislike')">Pas intéressé</button>
+                </div>
+            `;
+
+            const transparencyHtml = `
+                <div class="mood-hint" title="Ce contenu t'est proposé pour rendre tes passions plus visibles et affiner ton flux.">
+                    Nous ajustons ton flux avec tes centres d'intérêt.
+                </div>
+            `;
+
             return `
             <div class="immersive-post" data-content-id="${content.contentId}" data-user-id="${content.userId}">
                 <div class="post-content-wrap">
@@ -5278,6 +5413,8 @@ async function renderImmersiveFeed(contents) {
                         </div>
                         
                         <p>${content.description}</p>
+                        ${transparencyHtml}
+                        ${moodActionsHtml}
                         <div class="immersive-post-user">
                             <button class="profile-link immersive-profile-link" onclick="event.stopPropagation(); handleProfileClick('${content.userId}', this, true)">
                                 <img src="${contentUserAvatar}" alt="Avatar de ${contentUserName}" class="immersive-post-user-avatar">
@@ -7223,6 +7360,76 @@ function setupDiscoverVideoInteractions() {
                 console.log("Forced card video to stay muted");
             }
         });
+    });
+}
+
+// Mood tracking - attention sensors (single observer for perf)
+let discoverAttentionObserver = null;
+const discoverAttentionTimers = new Map();
+
+function clearDiscoverAttentionTimers() {
+    discoverAttentionTimers.forEach((timer) => clearTimeout(timer));
+    discoverAttentionTimers.clear();
+}
+
+function markContentAppreciated(el) {
+    const contentId =
+        el?.dataset?.contentId ||
+        el?.closest(".user-card")?.dataset?.contentId ||
+        null;
+    if (!contentId) return;
+    if (el.dataset.moodRecorded === "true") return;
+    const content = findContentById(contentId);
+    if (!content) return;
+    el.dataset.moodRecorded = "true";
+    adjustMoodScores(content.tags || [], 1.4);
+}
+
+function initDiscoverMoodTracking() {
+    const discoverPage = document.getElementById("discover");
+    if (!discoverPage || !discoverPage.classList.contains("active")) return;
+
+    if (discoverAttentionObserver) {
+        discoverAttentionObserver.disconnect();
+        clearDiscoverAttentionTimers();
+    }
+
+    const options = {
+        root: null,
+        rootMargin: "0px 0px -30% 0px",
+        threshold: 0.55,
+    };
+
+    discoverAttentionObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+            const target = entry.target;
+            const isVideo = target.tagName === "VIDEO";
+            const delay = isVideo ? 10000 : 4000; // 10s video, 4s image
+
+            if (entry.isIntersecting) {
+                if (!discoverAttentionTimers.has(target)) {
+                    const timer = setTimeout(() => {
+                        markContentAppreciated(target);
+                        discoverAttentionTimers.delete(target);
+                    }, delay);
+                    discoverAttentionTimers.set(target, timer);
+                }
+            } else {
+                const timer = discoverAttentionTimers.get(target);
+                if (timer) {
+                    clearTimeout(timer);
+                    discoverAttentionTimers.delete(target);
+                }
+            }
+        });
+    }, options);
+
+    const targets = document.querySelectorAll(
+        ".user-card video.card-media, .user-card img.card-media",
+    );
+    targets.forEach((el) => {
+        if (!el.dataset.contentId) return;
+        discoverAttentionObserver.observe(el);
     });
 }
 
