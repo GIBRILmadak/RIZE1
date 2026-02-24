@@ -5376,12 +5376,6 @@ async function renderImmersiveFeed(contents) {
                 </div>
             `;
 
-            const transparencyHtml = `
-                <div class="mood-hint" title="Ce contenu t'est proposé pour rendre tes passions plus visibles et affiner ton flux.">
-                    Nous ajustons ton flux avec tes centres d'intérêt.
-                </div>
-            `;
-
             return `
             <div class="immersive-post" data-content-id="${content.contentId}" data-user-id="${content.userId}">
                 <div class="post-content-wrap">
@@ -5413,7 +5407,6 @@ async function renderImmersiveFeed(contents) {
                         </div>
                         
                         <p>${content.description}</p>
-                        ${transparencyHtml}
                         ${moodActionsHtml}
                         <div class="immersive-post-user">
                             <button class="profile-link immersive-profile-link" onclick="event.stopPropagation(); handleProfileClick('${content.userId}', this, true)">
