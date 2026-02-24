@@ -4073,6 +4073,11 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
         );
     }
 
+    const dayBadge =
+        !isAnnouncement && latestContent && typeof latestContent.dayNumber === "number"
+            ? `<span class="status-day">J-${latestContent.dayNumber}</span>`
+            : "";
+
     return `
         <div class="${cardClass}" data-user="${userId}" onclick="openImmersive('${userId}', '${latestContent.contentId}')">
             ${mediaHtml}
@@ -4080,7 +4085,7 @@ function renderUserCard(userId, isFollowing = false, isEncouraged = false) {
                 ${arcInfo}
                 ${isAnnouncement ? '<span class="announcement-chip">Annonce</span>' : ""}
                 <div class="card-status" style="border-color: ${stateColor}20; color: ${stateColor};">
-                    <span class="status-day">J-${latestContent ? latestContent.dayNumber : 0}</span>
+                    ${dayBadge}
                     ${latestContent ? latestContent.title : "Aucune activité"}
                 </div>
                 
@@ -5237,13 +5242,18 @@ async function renderImmersiveFeed(contents) {
                 ? "courage-btn encouraged"
                 : "courage-btn";
 
+            const dayPill =
+                !isAnnouncement && typeof content.dayNumber === "number"
+                    ? `<span class="step-indicator">Jour ${content.dayNumber}</span>`
+                    : "";
+
             return `
             <div class="immersive-post" data-content-id="${content.contentId}" data-user-id="${content.userId}">
                 <div class="post-content-wrap">
                     ${mediaHtml}
                     <div class="post-info">
                         <div class="immersive-meta-row">
-                            <span class="step-indicator">Jour ${content.dayNumber}</span>
+                            ${dayPill}
                             <span class="state-tag">${stateLabel}</span>
                             ${isAnnouncement ? '<span class="announcement-chip">Annonce</span>' : ""}
                             ${
