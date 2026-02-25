@@ -5,6 +5,12 @@
 let notificationChannel = null;
 let notifications = [];
 const NOTIF_PERMISSION_KEY = "xera-notif-permission-requested";
+const PUSH_SUBSCRIBE_URL = "/api/push/subscribe";
+const VAPID_PUBLIC_KEY =
+    (typeof window !== "undefined" && window.VAPID_PUBLIC_KEY) ||
+    "<REMPLACEZ_PAR_VOTRE_CLE_PUBLIQUE_VAPID>";
+let swRegistration = null;
+let pushSubscription = null;
 
 // Initialiser les notifications
 async function initializeNotifications() {
@@ -15,12 +21,78 @@ async function initializeNotifications() {
     
     // S'abonner aux nouvelles notifications en temps réel
     subscribeToNotifications();
-    
+
     // Mettre à jour le badge
     updateNotificationBadge();
 
     // Demander la permission navigateur (une seule fois)
     requestBrowserNotificationPermission();
+
+    // Enregistrer le service worker et l'abonnement push (pour notifications arrière-plan)
+    setupPushNotifications();
+}
+
+// Enregistrer le SW + abonnement push
+async function setupPushNotifications() {
+    if (
+        typeof window === "undefined" ||
+        !("serviceWorker" in navigator) ||
+        !("PushManager" in window)
+    ) {
+        return;
+    }
+    if (!VAPID_PUBLIC_KEY || VAPID_PUBLIC_KEY.includes("REMPLACEZ")) {
+        console.warn(
+            "VAPID_PUBLIC_KEY manquante. Configurez js/push-config.js pour activer le push.",
+        );
+        return;
+    }
+
+    try {
+        swRegistration =
+            swRegistration ||
+            (await navigator.serviceWorker.register("/sw.js", {
+                scope: "/",
+            }));
+
+        // Si le SW a été mis à jour, conserver la clé publique pour resubscribe
+        if (swRegistration?.active) {
+            swRegistration.active.postMessage({
+                type: "SET_VAPID",
+                publicKey: VAPID_PUBLIC_KEY,
+            });
+        }
+
+        if (Notification.permission !== "granted") {
+            const perm = await Notification.requestPermission();
+            if (perm !== "granted") return;
+        }
+
+        pushSubscription =
+            pushSubscription || (await swRegistration.pushManager.getSubscription());
+
+        if (!pushSubscription) {
+            const appServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+            pushSubscription = await swRegistration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: appServerKey,
+            });
+        }
+
+        if (pushSubscription) {
+            await sendSubscriptionToServer(pushSubscription);
+        }
+
+        // Écoute les resubscriptions envoyées par le SW
+        navigator.serviceWorker.addEventListener("message", async (event) => {
+            if (event.data?.type === "PUSH_SUBSCRIPTION_REFRESH") {
+                pushSubscription = event.data.subscription;
+                await sendSubscriptionToServer(pushSubscription);
+            }
+        });
+    } catch (error) {
+        console.warn("Push setup failed:", error);
+    }
 }
 
 // Charger les notifications existantes
@@ -365,5 +437,42 @@ function unsubscribeFromNotifications() {
     if (notificationChannel) {
         supabase.removeChannel(notificationChannel);
         notificationChannel = null;
+    }
+
+    // Optionnel: se désabonner du push
+    if (pushSubscription && swRegistration) {
+        pushSubscription.unsubscribe().catch(() => {});
+    }
+}
+
+// Convertir une clé publique VAPID base64 vers Uint8Array
+function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding)
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+    const rawData = atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+}
+
+// Envoyer l'abonnement push au backend
+async function sendSubscriptionToServer(subscription) {
+    if (!currentUser || !subscription) return;
+    try {
+        await fetch(PUSH_SUBSCRIBE_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                userId: currentUser.id,
+                subscription,
+            }),
+            credentials: "include",
+        });
+    } catch (error) {
+        console.warn("Impossible d'enregistrer l'abonnement push", error);
     }
 }
