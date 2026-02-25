@@ -5337,7 +5337,7 @@ async function renderImmersiveFeed(contents) {
                 if (content.type === "video") {
                     mediaHtml = `
                     <div class="immersive-video-wrap" style="position: relative; width: 100%; height: 100%;">
-                        <video id="immersive-video-${content.contentId}" class="immersive-video" src="${content.mediaUrl}" playsinline webkit-playsinline autoplay muted preload="auto" style="width: 100%; height: 100%; object-fit: contain;" data-content-id="${content.contentId}" disablePictureInPicture></video>
+                        <video id="immersive-video-${content.contentId}" class="immersive-video" src="${content.mediaUrl}" playsinline webkit-playsinline autoplay muted loop preload="auto" style="width: 100%; height: 100%; object-fit: contain;" data-content-id="${content.contentId}" disablePictureInPicture></video>
                         <div class="video-fallback">
                             <img src="icons/play.svg" alt="Play" width="56" height="56">
                             <span>Vidéo</span>
@@ -5673,6 +5673,36 @@ function closeImmersive() {
 
 let currentImmersiveUser = null;
 
+// Désactive le son et met en pause toutes les vidéos immersives sauf celle passée
+function muteOtherImmersiveVideos(activeVideo) {
+    const videos = document.querySelectorAll("video.immersive-video");
+    videos.forEach((vid) => {
+        if (vid === activeVideo) return;
+        vid.pause();
+        vid.muted = true;
+    });
+}
+
+// Renvoie la vidéo immersive la plus visible à l'écran
+function getActiveImmersiveVideo() {
+    const videos = Array.from(document.querySelectorAll("video.immersive-video"));
+    let best = null;
+    let bestScore = 0;
+    videos.forEach((vid) => {
+        const rect = vid.getBoundingClientRect();
+        const visibleHeight = Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0);
+        const visibleWidth = Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0);
+        const visibleArea = Math.max(0, visibleHeight) * Math.max(0, visibleWidth);
+        const totalArea = Math.max(1, rect.width * rect.height);
+        const ratio = visibleArea / totalArea;
+        if (ratio > bestScore) {
+            bestScore = ratio;
+            best = vid;
+        }
+    });
+    return bestScore >= 0.4 ? best : null; // au moins 40% visible
+}
+
 function setupImmersiveObserver() {
     const posts = document.querySelectorAll(".immersive-post");
     const headerContainer = document.getElementById(
@@ -5689,6 +5719,7 @@ function setupImmersiveObserver() {
                 if (entry.isIntersecting) {
                     // La vidéo est visible - la jouer
                     if (video) {
+                        muteOtherImmersiveVideos(video);
                         video.muted = !window.__immersiveSoundUnlocked;
                         video.play().catch((error) => {
                             console.log(
@@ -5731,6 +5762,7 @@ function setupImmersiveObserver() {
                     // La vidéo n'est plus visible - l'arrêter
                     if (video) {
                         video.pause();
+                        video.muted = true;
                     }
                 }
             });
@@ -5752,6 +5784,7 @@ function setupImmersiveVideoUI() {
         const video = wrap.querySelector("video.immersive-video");
         const playIcon = wrap.querySelector(".immersive-video-play");
         if (!video || !playIcon) return;
+        video.loop = true;
 
         const updateOverlay = () => {
             playIcon.style.display = video.paused ? "block" : "none";
@@ -5782,6 +5815,7 @@ function setupImmersiveVideoUI() {
                 if (!window.__immersiveSoundUnlocked) {
                     window.__immersiveSoundUnlocked = true;
                 }
+                muteOtherImmersiveVideos(video);
                 video.muted = false;
                 video.play().catch(() => {});
             } else {
@@ -5805,6 +5839,7 @@ function setupVideoAutoplay(video, container) {
             entries.forEach((entry) => {
                 if (entry.isIntersecting) {
                     // La vidéo est visible - tenter de la jouer
+                    muteOtherImmersiveVideos(video);
                     video.muted = !window.__immersiveSoundUnlocked;
                     video
                         .play()
@@ -5820,6 +5855,7 @@ function setupVideoAutoplay(video, container) {
                 } else {
                     // La vidéo n'est plus visible - mettre en pause pour économiser les ressources
                     video.pause();
+                    video.muted = true;
                 }
             });
         },
@@ -5840,16 +5876,15 @@ function initGlobalSoundActivation() {
         soundActivated = true;
         window.__immersiveSoundUnlocked = true;
 
-        // Activer le son uniquement pour la vidéo immersive active
-        const allVideos = document.querySelectorAll("video.immersive-video");
-        allVideos.forEach((video) => {
-            if (!video.paused) {
-                video.muted = false;
-                video.play().catch(() => {});
-            }
-        });
+        // Activer le son uniquement pour la vidéo immersive la plus visible
+        const active = getActiveImmersiveVideo();
+        if (active) {
+            muteOtherImmersiveVideos(active);
+            active.muted = false;
+            active.play().catch(() => {});
+        }
 
-        console.log("Son activé pour toutes les vidéos");
+        console.log("Son activé (une seule vidéo immersive à la fois)");
 
         // Retirer tous les écouteurs
         document.removeEventListener("click", activateAllSounds, true);
@@ -9402,7 +9437,8 @@ function initializeVideoControls() {
         if (video.classList.contains("card-media")) {
             video.muted = true; // Forcer muted pour les cartes
         } else if (video.classList.contains("immersive-video")) {
-            video.muted = false; // Permettre le son pour le feed immersif
+            video.muted = true; // Démarrer muet, sera démuté uniquement pour la vidéo active
+            video.loop = true; // Toujours en boucle
         }
 
         // Ajouter des gestionnaires pour les interactions utilisateur
@@ -9418,6 +9454,11 @@ function initializeVideoControls() {
             // Optionnel : mettre en pause quand la souris quitte
             // video.pause();
         });
+
+        // Si une vidéo immersive commence à jouer, muter les autres
+        if (video.classList.contains("immersive-video")) {
+            video.addEventListener("play", () => muteOtherImmersiveVideos(video));
+        }
     });
 }
 
