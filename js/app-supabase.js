@@ -23,6 +23,7 @@ const FOLLOWED_IDS_CACHE_TTL_MS = 15000;
 let followedUserIdsCache = new Set();
 let followedUserIdsCacheOwner = null;
 let followedUserIdsCacheUpdatedAt = 0;
+let discoverVideoObserver = null;
 
 function isMobileDevice() {
     return window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
@@ -2496,6 +2497,39 @@ function getSuperAdminPanelHtml() {
 
             <div class="verification-admin-block" style="margin-top: 1.5rem;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                    <h4 style="margin:0;">Pulse temps réel</h4>
+                    <button class="btn-verify" type="button" id="admin-stats-refresh" onclick="refreshAppPulse()">Mettre à jour</button>
+                </div>
+                <p style="color: var(--text-secondary); font-size: 0.9rem; margin: 0.35rem 0 0.9rem;">
+                    Comptes, visites (proxy via vues de contenu) et actifs estimés, en direct depuis Supabase.
+                </p>
+                <div id="admin-stats-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:0.75rem;">
+                    <div class="admin-card" style="border:1px solid var(--border-color); border-radius:12px; padding:0.9rem;">
+                        <div style="font-size:0.9rem; color:var(--text-secondary);">Utilisateurs</div>
+                        <div id="admin-stats-users" style="font-size:1.8rem; font-weight:700; margin:0.3rem 0;">—</div>
+                        <div style="font-size:0.85rem; color:var(--text-secondary);">Total comptes créés</div>
+                    </div>
+                    <div class="admin-card" style="border:1px solid var(--border-color); border-radius:12px; padding:0.9rem;">
+                        <div style="font-size:0.9rem; color:var(--text-secondary);">Visites (proxy)</div>
+                        <div id="admin-stats-visits" style="font-size:1.8rem; font-weight:700; margin:0.3rem 0;">—</div>
+                        <div style="font-size:0.85rem; color:var(--text-secondary);">Somme des vues de contenu</div>
+                    </div>
+                    <div class="admin-card" style="border:1px solid var(--border-color); border-radius:12px; padding:0.9rem;">
+                        <div style="font-size:0.9rem; color:var(--text-secondary);">Actifs quotidiens (24h)</div>
+                        <div id="admin-stats-dau" style="font-size:1.8rem; font-weight:700; margin:0.3rem 0;">—</div>
+                        <div style="font-size:0.85rem; color:var(--text-secondary);">Utilisateurs ayant posté aujourd'hui</div>
+                    </div>
+                    <div class="admin-card" style="border:1px solid var(--border-color); border-radius:12px; padding:0.9rem;">
+                        <div style="font-size:0.9rem; color:var(--text-secondary);">MAU estimés (30j)</div>
+                        <div id="admin-stats-mau" style="font-size:1.8rem; font-weight:700; margin:0.3rem 0;">—</div>
+                        <div style="font-size:0.85rem; color:var(--text-secondary);">Utilisateurs uniques actifs sur 30 jours</div>
+                    </div>
+                </div>
+                <div id="admin-stats-meta" style="color: var(--text-secondary); font-size:0.9rem; margin-top:0.35rem;">Clique sur « Mettre à jour » pour rafraîchir.</div>
+            </div>
+
+            <div class="verification-admin-block" style="margin-top: 1.5rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap;">
                     <h4 style="margin:0;">Feedback utilisateurs</h4>
                     <div style="display:flex; gap:0.5rem; align-items:center;">
                         <button class="btn-verify" type="button" onclick="fetchFeedbackInbox()">Rafraîchir</button>
@@ -2506,6 +2540,144 @@ function getSuperAdminPanelHtml() {
             </div>
         </div>
     `;
+}
+
+function formatStatNumber(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+        return "—";
+    }
+    const n = Number(value);
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+    return n.toLocaleString("fr-FR");
+}
+
+async function fetchTotalContentViews() {
+    // Essaie d'abord une agrégation côté BDD (views.sum), sinon fallback en local
+    try {
+        const { data, error } = await supabase
+            .from("content")
+            .select("views.sum")
+            .single();
+        if (!error && data) {
+            const sum =
+                data.sum ??
+                data["views.sum"] ??
+                (data.views && data.views.sum) ??
+                0;
+            if (typeof sum === "number") return sum;
+        }
+    } catch (err) {
+        console.warn("Aggregation views.sum failed, fallback to client sum", err);
+    }
+
+    try {
+        const { data, error } = await supabase.from("content").select("views");
+        if (error) throw error;
+        return (data || []).reduce(
+            (acc, row) => acc + (Number(row.views) || 0),
+            0,
+        );
+    } catch (err) {
+        console.error("Unable to compute total content views:", err);
+        return 0;
+    }
+}
+
+let appPulseRefreshing = false;
+
+async function refreshAppPulse() {
+    if (!isSuperAdmin()) {
+        ToastManager?.error("Accès refusé", "Réservé au super-admin.");
+        return;
+    }
+    if (appPulseRefreshing) return;
+    appPulseRefreshing = true;
+
+    const btn = document.getElementById("admin-stats-refresh");
+    const meta = document.getElementById("admin-stats-meta");
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Mise à jour…";
+    }
+    if (meta) meta.textContent = "Récupération des données en cours…";
+
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const thirtyAgo = new Date(today);
+    thirtyAgo.setDate(today.getDate() - 30);
+    const thirtyStr = thirtyAgo.toISOString().slice(0, 10);
+
+    try {
+        const [{ count: totalUsers, error: userError }, totalViews, dauPayload] =
+            await Promise.all([
+                supabase
+                    .from("users")
+                    .select("id", { count: "exact", head: true }),
+                fetchTotalContentViews(),
+                supabase
+                    .from("daily_metrics")
+                    .select("user_id, date")
+                    .gte("date", thirtyStr),
+            ]);
+
+        if (userError) throw userError;
+        const dailyRows = Array.isArray(dauPayload?.data)
+            ? dauPayload.data
+            : [];
+        const mauSet = new Set();
+        const dauSet = new Set();
+        dailyRows.forEach((row) => {
+            if (row?.user_id) {
+                mauSet.add(row.user_id);
+                if (row.date === todayStr) {
+                    dauSet.add(row.user_id);
+                }
+            }
+        });
+
+        const stats = {
+            totalUsers: totalUsers ?? 0,
+            totalViews: typeof totalViews === "number" ? totalViews : 0,
+            dau: dauSet.size,
+            mau: mauSet.size,
+        };
+        updateAppPulseUI(stats);
+    } catch (error) {
+        console.error("Erreur récupération stats admin:", error);
+        ToastManager?.error(
+            "Erreur",
+            error?.message || "Impossible de récupérer les stats.",
+        );
+        if (meta) meta.textContent = "Erreur lors de la récupération.";
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = "Mettre à jour";
+        }
+        appPulseRefreshing = false;
+    }
+}
+
+function updateAppPulseUI(stats) {
+    const { totalUsers, totalViews, dau, mau } = stats || {};
+    const usersEl = document.getElementById("admin-stats-users");
+    const visitsEl = document.getElementById("admin-stats-visits");
+    const dauEl = document.getElementById("admin-stats-dau");
+    const mauEl = document.getElementById("admin-stats-mau");
+    const meta = document.getElementById("admin-stats-meta");
+
+    if (usersEl) usersEl.textContent = formatStatNumber(totalUsers || 0);
+    if (visitsEl) visitsEl.textContent = formatStatNumber(totalViews || 0);
+    if (dauEl) dauEl.textContent = formatStatNumber(dau || 0);
+    if (mauEl) mauEl.textContent = formatStatNumber(mau || 0);
+    if (meta) {
+        const now = new Date();
+        meta.textContent = `Mis à jour à ${now.toLocaleTimeString("fr-FR", {
+            hour: "2-digit",
+            minute: "2-digit",
+        })} — MAU estimés via daily_metrics (30 jours glissants).`;
+    }
 }
 
 function renderSuperAdminPage() {
@@ -2525,6 +2697,8 @@ function renderSuperAdminPage() {
         </div>
         ${getSuperAdminPanelHtml()}
     `;
+    // Précharge les stats temps réel si visible
+    setTimeout(() => refreshAppPulse(), 150);
 }
 
 async function fetchFeedbackInbox() {
@@ -4746,6 +4920,99 @@ function renderLiveStreamCard(stream) {
     `;
 }
 
+// Helpers to keep Discover refreshes incremental (avoid full reflows)
+function getDiscoverItemKey(item) {
+    if (!item) return null;
+    if (item.type === "live" && item.stream?.id) return `live-${item.stream.id}`;
+    if (item.type === "user" && item.user?.id) return `user-${item.user.id}`;
+    return null;
+}
+
+function getDiscoverItemContentId(item, userContentMap) {
+    if (!item) return null;
+    if (item.type === "live" && item.stream?.id) return `live-${item.stream.id}`;
+    if (item.type === "user" && item.user?.id) {
+        const latest = userContentMap.get(item.user.id);
+        return latest?.contentId || null;
+    }
+    return null;
+}
+
+function deriveDiscoverKeyFromElement(el) {
+    if (!el) return null;
+    if (el.dataset.discoverKey) return el.dataset.discoverKey;
+    if (el.dataset.stream) return `live-${el.dataset.stream}`;
+    if (el.dataset.user) return `user-${el.dataset.user}`;
+    return null;
+}
+
+function createDiscoverElement(html, key, contentId, options = {}) {
+    const { markAsNew = true } = options;
+    const template = document.createElement("template");
+    template.innerHTML = html.trim();
+    const node = template.content.firstElementChild;
+    if (!node) return null;
+    node.dataset.discoverKey = key;
+    if (contentId) node.dataset.contentId = contentId;
+    if (markAsNew) node.classList.add("discover-card-new");
+    return node;
+}
+
+function reconcileDiscoverGrid(grid, renderedItems, waitMessage) {
+    const existingMap = new Map();
+    Array.from(grid.children).forEach((child) => {
+        const key = deriveDiscoverKeyFromElement(child);
+        if (key) {
+            child.dataset.discoverKey = key;
+            existingMap.set(key, child);
+        }
+    });
+
+    const fragment = document.createDocumentFragment();
+    renderedItems.forEach(({ key, html, contentId, type }) => {
+        if (!key || !html) return;
+        const existing = existingMap.get(key);
+        const shouldReplace =
+            !existing ||
+            (typeof contentId === "string" &&
+                existing.dataset.contentId &&
+                existing.dataset.contentId !== contentId) ||
+            type === "live"; // live cards change often (viewers, status)
+
+        const node = shouldReplace
+            ? createDiscoverElement(html, key, contentId, {
+                  markAsNew: !existing,
+              })
+            : existing;
+
+        if (existing && !shouldReplace && contentId && !existing.dataset.contentId) {
+            existing.dataset.contentId = contentId;
+        }
+
+        if (node) {
+            fragment.appendChild(node);
+        }
+    });
+
+    grid.replaceChildren(fragment);
+
+    if (waitMessage) {
+        const hasCard = grid.querySelector(".user-card, .discover-card");
+        if (hasCard) {
+            waitMessage.classList.add("is-hidden");
+        }
+    }
+
+    if (window.AnimationManager) {
+        AnimationManager.fadeInElements(".discover-card-new", 120);
+        setTimeout(() => {
+            grid.querySelectorAll(".discover-card-new").forEach((el) => {
+                el.classList.remove("discover-card-new");
+            });
+        }, 800);
+    }
+}
+
 async function renderDiscoverGrid() {
     const grid = document.querySelector(".discover-grid");
     if (!grid) return;
@@ -4817,7 +5084,6 @@ async function renderDiscoverGrid() {
 
     let usersToDisplay = [...allUsers];
     const currentFilter = window.discoverFilter || "all";
-    let cardsHTML = "";
 
     // Tri de base par récence puis mélange pondéré vérifiés/non-vérifiés
     usersToDisplay = sortUsersByLatestRecency(usersToDisplay);
@@ -4874,71 +5140,49 @@ async function renderDiscoverGrid() {
         return renderUserCard(item.user.id, isFollowed, isEncouraged, content);
     };
 
-    cardsHTML = mixedItems.map(renderItem).filter(Boolean).join("");
+    const renderedItems = [];
+    mixedItems.forEach((item) => {
+        const html = renderItem(item);
+        if (!html) return;
+        const key = getDiscoverItemKey(item);
+        const contentId = getDiscoverItemContentId(item, userContentMap);
+        if (!key) return;
+        renderedItems.push({
+            key,
+            html,
+            contentId,
+            type: item.type,
+        });
+    });
 
-    if (cardsHTML !== "") {
-        grid.innerHTML = cardsHTML;
-
-        if (waitMessage) {
-            const hasCard = grid.querySelector(".user-card, .discover-card");
-            if (hasCard) {
-                waitMessage.classList.add("is-hidden");
-            }
-        }
-
-        // Animations d'apparition progressives
-        if (window.AnimationManager) {
-            setTimeout(() => {
-                AnimationManager.fadeInElements(".discover-card", 150);
-                AnimationManager.fadeInElements(".user-card", 150);
-            }, 100);
-        }
-
+    if (renderedItems.length > 0) {
+        reconcileDiscoverGrid(grid, renderedItems, waitMessage);
         setupDiscoverVideoInteractions();
         initDiscoverMoodTracking();
         return;
     }
 
-    if (cardsHTML === "") {
-        if (
-            window.LoadingStateManager &&
-            typeof LoadingStateManager.showEmptyState === "function"
-        ) {
-            LoadingStateManager.showEmptyState(
-                grid,
-                "👥",
-                "Aucune trajectoire à explorer",
-                "Revenez plus tard pour découvrir de nouvelles trajectoires.",
-                { text: "Actualiser", action: "location.reload()" },
-            );
-        } else {
-            grid.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-state-icon">👥</div>
-                    <h3>Aucune trajectoire à explorer</h3>
-                    <p>Revenez plus tard pour découvrir de nouvelles trajectoires.</p>
-                </div>
-            `;
-        }
-        if (waitMessage) waitMessage.classList.add("is-hidden");
+    if (
+        window.LoadingStateManager &&
+        typeof LoadingStateManager.showEmptyState === "function"
+    ) {
+        LoadingStateManager.showEmptyState(
+            grid,
+            "👥",
+            "Aucune trajectoire à explorer",
+            "Revenez plus tard pour découvrir de nouvelles trajectoires.",
+            { text: "Actualiser", action: "location.reload()" },
+        );
     } else {
-        grid.innerHTML = cardsHTML;
-
-        if (waitMessage) {
-            waitMessage.classList.add("is-hidden");
-        }
-
-        // Animations d'apparition progressives
-        if (window.AnimationManager) {
-            setTimeout(() => {
-                AnimationManager.fadeInElements(".discover-card", 150);
-                AnimationManager.fadeInElements(".user-card", 150);
-            }, 100);
-        }
+        grid.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">👥</div>
+                <h3>Aucune trajectoire à explorer</h3>
+                <p>Revenez plus tard pour découvrir de nouvelles trajectoires.</p>
+            </div>
+        `;
     }
-
-    setupDiscoverVideoInteractions();
-    initDiscoverMoodTracking();
+    if (waitMessage) waitMessage.classList.add("is-hidden");
 }
 
 /* ========================================
@@ -7510,31 +7754,35 @@ function toggleVideoPlay(video) {
 function setupDiscoverVideoInteractions() {
     const videos = document.querySelectorAll("video.card-media");
 
-    // Intersection Observer for Auto-play
-    const observerOptions = {
-        root: null,
-        rootMargin: "0px",
-        threshold: 0.6, // Play when 60% visible
-    };
+    // Intersection Observer for Auto-play (shared to avoid stacking observers)
+    if (!discoverVideoObserver) {
+        const observerOptions = {
+            root: null,
+            rootMargin: "0px",
+            threshold: 0.6, // Play when 60% visible
+        };
+        discoverVideoObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                const video = entry.target;
 
-    const observer = new IntersectionObserver((entries) => {
-        entries.forEach((entry) => {
-            const video = entry.target;
-
-            if (entry.isIntersecting) {
-                // Play if visible - keep muted for cards
-                video.muted = true;
-                video.play().catch(() => {
-                    console.log("Autoplay blocked for card video");
-                });
-            } else {
-                // Pause if not visible
-                video.pause();
-            }
-        });
-    }, observerOptions);
+                if (entry.isIntersecting) {
+                    // Play if visible - keep muted for cards
+                    video.muted = true;
+                    video.play().catch(() => {
+                        console.log("Autoplay blocked for card video");
+                    });
+                } else {
+                    // Pause if not visible
+                    video.pause();
+                }
+            });
+        }, observerOptions);
+    }
 
     videos.forEach((video) => {
+        if (video.dataset.discoverVideoSetup === "1") return;
+        video.dataset.discoverVideoSetup = "1";
+
         const wrap = video.closest(".card-media-wrap");
         // Initial setup - ensure muted for cards
         video.muted = true;
@@ -7554,7 +7802,7 @@ function setupDiscoverVideoInteractions() {
         );
 
         // Start observing
-        observer.observe(video);
+        discoverVideoObserver.observe(video);
 
         // Autoplay on hover for discover cards
         video.addEventListener("mouseenter", function () {
@@ -9462,6 +9710,7 @@ window.submitAdminAnnouncement = submitAdminAnnouncement;
 window.editAdminAnnouncement = editAdminAnnouncement;
 window.cancelAdminAnnouncementEdit = cancelAdminAnnouncementEdit;
 window.renderSuperAdminPage = renderSuperAdminPage;
+window.refreshAppPulse = refreshAppPulse;
 window.fetchAdminAnnouncements = fetchAdminAnnouncements;
 window.fetchFeedbackInbox = fetchFeedbackInbox;
 window.fetchVerifiedBadges = fetchVerifiedBadges;

@@ -25,10 +25,10 @@ async function initializeNotifications() {
     // Mettre à jour le badge
     updateNotificationBadge();
 
-    // Demander la permission navigateur (une seule fois)
-    requestBrowserNotificationPermission();
+    // Afficher un CTA type YouTube pour déclencher la demande via geste utilisateur
+    renderNotificationPermissionCTA();
 
-    // Enregistrer le service worker et l'abonnement push (pour notifications arrière-plan)
+    // Enregistrer le service worker / push uniquement si déjà autorisé
     setupPushNotifications();
 }
 
@@ -63,10 +63,8 @@ async function setupPushNotifications() {
             });
         }
 
-        if (Notification.permission !== "granted") {
-            const perm = await Notification.requestPermission();
-            if (perm !== "granted") return;
-        }
+        // Ne pas forcer la demande ici : on attend le geste utilisateur (CTA)
+        if (Notification.permission !== "granted") return;
 
         pushSubscription =
             pushSubscription || (await swRegistration.pushManager.getSubscription());
@@ -237,6 +235,73 @@ function requestBrowserNotificationPermission(force = false) {
         });
     } catch (e) {
         console.warn("Notification permission request failed", e);
+    }
+}
+
+// CTA léger pour inviter l'utilisateur à autoriser les notifications (YouTube-like)
+function renderNotificationPermissionCTA() {
+    if (typeof window === "undefined" || typeof Notification === "undefined")
+        return;
+    const alreadyAsked = localStorage.getItem(NOTIF_PERMISSION_KEY) === "1";
+    if (Notification.permission === "granted" || Notification.permission === "denied")
+        return;
+    if (alreadyAsked) return;
+
+    const anchor =
+        document.getElementById("notification-btn") ||
+        document.querySelector(".nav-actions") ||
+        document.body;
+    if (!anchor) return;
+
+    // Avoid duplicate banner
+    if (document.getElementById("notif-permission-cta")) return;
+
+    const cta = document.createElement("div");
+    cta.id = "notif-permission-cta";
+    cta.style.cssText =
+        "position:fixed; bottom:18px; right:18px; max-width:320px; z-index:1200; background:var(--surface-color, #111); color:var(--text-primary, #fff); border:1px solid var(--border-color, rgba(255,255,255,0.12)); box-shadow:0 12px 30px rgba(0,0,0,0.25); border-radius:14px; padding:14px 16px; display:flex; gap:12px; align-items:flex-start;";
+    cta.innerHTML = `
+        <div style="flex-shrink:0; width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, #6366f1, #8b5cf6); display:flex; align-items:center; justify-content:center; font-size:18px;">🔔</div>
+        <div style="flex:1; min-width:0;">
+            <div style="font-weight:700; margin-bottom:6px;">Activer les notifications</div>
+            <div style="color:var(--text-secondary, #b5b5c3); font-size:0.9rem; line-height:1.3;">Soyez averti des nouveaux lives, réponses et encouragements.</div>
+            <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+                <button id="notif-cta-allow" class="btn-verify" style="padding:8px 12px; border:none; border-radius:10px; background:#10b981; color:#fff; cursor:pointer;">Autoriser</button>
+                <button id="notif-cta-later" class="btn-ghost" style="padding:8px 12px; border:1px solid var(--border-color, rgba(255,255,255,0.15)); border-radius:10px; background:transparent; color:var(--text-secondary, #b5b5c3); cursor:pointer;">Plus tard</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(cta);
+
+    const closeCta = () => {
+        cta.remove();
+    };
+
+    const allowBtn = document.getElementById("notif-cta-allow");
+    const laterBtn = document.getElementById("notif-cta-later");
+
+    if (allowBtn) {
+        allowBtn.addEventListener("click", async () => {
+            localStorage.setItem(NOTIF_PERMISSION_KEY, "1");
+            const perm = await Notification.requestPermission();
+            if (perm === "granted") {
+                // Inscrire au push dès l'acceptation
+                setupPushNotifications();
+                ToastManager?.success(
+                    "Notifications activées",
+                    "Nous vous avertirons comme sur YouTube.",
+                );
+            }
+            closeCta();
+        });
+    }
+
+    if (laterBtn) {
+        laterBtn.addEventListener("click", () => {
+            cta.style.opacity = "0";
+            setTimeout(closeCta, 120);
+        });
     }
 }
 
