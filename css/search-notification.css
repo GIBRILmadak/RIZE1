@@ -47,6 +47,94 @@
     pointer-events: none;
 }
 
+/* --- MODALE SQUELETTES RECHERCHE --- */
+.search-skeleton-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(3px);
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 6rem 1.25rem 2rem;
+    z-index: 1600;
+    pointer-events: none; /* visuel uniquement */
+}
+
+.search-skeleton-panel {
+    width: min(560px, 100%);
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1.25rem;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
+}
+
+.search-skeleton-row {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 0.9rem;
+}
+
+.skeleton-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: var(--border-color);
+    position: relative;
+    overflow: hidden;
+}
+
+.skeleton-line {
+    height: 12px;
+    border-radius: 8px;
+    background: var(--border-color);
+    position: relative;
+    overflow: hidden;
+}
+
+.skeleton-line.wide {
+    width: 80%;
+}
+
+.skeleton-line.mid {
+    width: 55%;
+}
+
+.skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.18),
+        transparent
+    );
+    animation: shimmer 1.4s infinite;
+}
+
+@keyframes shimmer {
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+@media (max-width: 640px) {
+    .search-container {
+        padding: 0 0.5rem;
+    }
+    .search-skeleton-modal {
+        padding-top: 4.5rem;
+    }
+    .search-input {
+        text-align: center;
+    }
+}
+
 /* --- RÉSULTATS DE RECHERCHE --- */
 .search-results {
     position: absolute;

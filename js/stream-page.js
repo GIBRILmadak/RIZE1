@@ -15,6 +15,25 @@
         };
     }
 
+    async function resolveStreamIdForHost(hostId) {
+        if (!hostId || typeof supabase === 'undefined') return null;
+        try {
+            const { data, error } = await supabase
+                .from('streaming_sessions')
+                .select('id, user_id, title, status')
+                .eq('user_id', hostId)
+                .eq('status', 'live')
+                .order('started_at', { ascending: false })
+                .limit(1)
+                .single();
+            if (error || !data) return null;
+            return data;
+        } catch (e) {
+            console.warn('resolveStreamIdForHost error', e);
+            return null;
+        }
+    }
+
     function ensureNavigateTo() {
         if (typeof window.navigateTo !== 'function') {
             window.navigateTo = (anchor) => {
@@ -78,7 +97,15 @@
     }
 
     async function boot() {
-        const { streamId, hostId, title, isNewLive, source } = getParams();
+        let { streamId, hostId, title, isNewLive, source } = getParams();
+
+        if (!streamId && hostId) {
+            const live = await resolveStreamIdForHost(hostId);
+            if (live && live.id) {
+                streamId = live.id;
+                title = live.title || title;
+            }
+        }
 
         if (!streamId && !hostId) {
             alert('ID de stream manquant');

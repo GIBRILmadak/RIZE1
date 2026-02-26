@@ -201,7 +201,7 @@ function subscribeToStream(streamId) {
     chatSyncInterval = setInterval(() => {
         if (!currentStream?.id) return;
         void fetchNewChatMessages(currentStream.id);
-    }, 4000);
+    }, 3000);
 }
 
 // Envoyer un message dans le chat
@@ -295,9 +295,6 @@ function getChatMessageKey(message) {
 
 // Gérer un nouveau message de chat
 async function handleNewChatMessage(message) {
-    const chatContainer = document.getElementById('stream-chat-messages');
-    if (!chatContainer) return;
-    
     const key = getChatMessageKey(message);
     if (key && renderedChatMessageIds.has(key)) return;
     if (key) renderedChatMessageIds.add(key);
@@ -317,15 +314,23 @@ async function handleNewChatMessage(message) {
         }
     }
 
+    if (message.created_at) {
+        lastChatCreatedAt = message.created_at;
+    }
+
+    if (window.liveChatStore) {
+        window.liveChatStore.push(message);
+        return;
+    }
+
+    const chatContainer = document.getElementById('stream-chat-messages');
+    if (!chatContainer) return;
+
     const messageElement = createChatMessageElement(message);
     chatContainer.appendChild(messageElement);
     
     // Scroll vers le bas
     chatContainer.scrollTop = chatContainer.scrollHeight;
-
-    if (message.created_at) {
-        lastChatCreatedAt = message.created_at;
-    }
 }
 
 // Créer un élément de message de chat
@@ -1471,14 +1476,18 @@ async function initializeStreamPage(streamId) {
     // Charger l'historique du chat
     const chatResult = await loadChatHistory(streamId);
     if (chatResult.success) {
-        const chatContainer = document.getElementById('stream-chat-messages');
-        if (chatContainer) {
-            chatContainer.innerHTML = '';
-            chatResult.messages.forEach(msg => {
-                const element = createChatMessageElement(msg);
-                chatContainer.appendChild(element);
-            });
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+        if (window.liveChatStore) {
+            window.liveChatStore.replace(chatResult.messages);
+        } else {
+            const chatContainer = document.getElementById('stream-chat-messages');
+            if (chatContainer) {
+                chatContainer.innerHTML = '';
+                chatResult.messages.forEach(msg => {
+                    const element = createChatMessageElement(msg);
+                    chatContainer.appendChild(element);
+                });
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
         }
     }
     

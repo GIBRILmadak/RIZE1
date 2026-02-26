@@ -4,6 +4,7 @@
 
 let searchResults = [];
 let searchTimeout = null;
+let searchSkeleton = null;
 
 // Initialiser la recherche
 function initializeSearch() {
@@ -11,6 +12,9 @@ function initializeSearch() {
     const searchResults = document.getElementById('search-results');
     
     if (!searchInput) return;
+
+    ensureSearchSkeleton();
+    applyMobilePlaceholder(searchInput);
     
     searchInput.addEventListener('input', (e) => {
         const query = e.target.value.trim();
@@ -20,9 +24,11 @@ function initializeSearch() {
         
         if (query.length < 2) {
             searchResults.style.display = 'none';
+            hideSearchSkeleton();
             return;
         }
         
+        showSearchSkeleton();
         searchTimeout = setTimeout(() => {
             performSearch(query);
         }, 300);
@@ -62,9 +68,10 @@ async function performSearch(query) {
         if (typeof window.recordSearchPreference === 'function') {
             window.recordSearchPreference(query);
         }
-
+        
         // Afficher les résultats
         displaySearchResults(users, content, query);
+        hideSearchSkeleton();
         
     } catch (error) {
         console.error('Erreur recherche:', error);
@@ -74,6 +81,7 @@ async function performSearch(query) {
             </div>
         `;
         searchResultsContainer.style.display = 'block';
+        hideSearchSkeleton();
     }
 }
 
@@ -131,6 +139,51 @@ function displaySearchResults(users, content, query) {
     
     searchResultsContainer.innerHTML = html;
     searchResultsContainer.style.display = 'block';
+}
+
+function ensureSearchSkeleton() {
+    if (searchSkeleton) return;
+    const modal = document.createElement('div');
+    modal.id = 'search-skeleton-modal';
+    modal.className = 'search-skeleton-modal';
+    modal.innerHTML = `
+        <div class="search-skeleton-panel">
+            ${buildSkeletonRows(5)}
+        </div>
+    `;
+    document.body.appendChild(modal);
+    searchSkeleton = modal;
+}
+
+function buildSkeletonRows(count) {
+    const rows = [];
+    for (let i = 0; i < count; i++) {
+        rows.push(`
+            <div class="search-skeleton-row">
+                <div class="skeleton-avatar skeleton-shimmer"></div>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div class="skeleton-line wide skeleton-shimmer"></div>
+                    <div class="skeleton-line mid skeleton-shimmer"></div>
+                </div>
+            </div>
+        `);
+    }
+    return rows.join('');
+}
+
+function showSearchSkeleton() {
+    if (searchSkeleton) searchSkeleton.style.display = 'flex';
+}
+
+function hideSearchSkeleton() {
+    if (searchSkeleton) searchSkeleton.style.display = 'none';
+}
+
+function applyMobilePlaceholder(inputEl) {
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile) {
+        inputEl.placeholder = 'Rechercher';
+    }
 }
 
 // Mettre en évidence les correspondances

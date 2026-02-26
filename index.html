@@ -281,7 +281,7 @@
                                 id="search-input"
                                 class="search-input"
                                 data-i18n-placeholder="searchPlaceholder"
-                                placeholder="Search creators or ARCs"
+                                placeholder="Rechercher"
                             />
                         </div>
                         <div id="search-results" class="search-results">
@@ -325,6 +325,18 @@
         <script src="js/arcs.js"></script>
         <!-- Script principal avec intégration Supabase -->
         <script src="js/app-supabase.js"></script>
+        <!-- React runtime et micro-app (chargés en différé pour ne rien casser) -->
+        <script
+            src="https://unpkg.com/react@18/umd/react.production.min.js"
+            crossorigin
+            defer
+        ></script>
+        <script
+            src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+            crossorigin
+            defer
+        ></script>
+        <script src="js/react-app.js" defer></script>
 
         <script>
             // Initialiser les fonctionnalités au chargement

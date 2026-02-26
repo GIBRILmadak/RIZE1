@@ -4241,6 +4241,13 @@ function renderUserCard(
                   .join(",")
             : "";
 
+    const liveCta =
+        latestContent?.type === "live"
+            ? `<button class="btn-live-join" onclick="event.stopPropagation(); openLiveStreamForUser('${userId}', '${escapeHtml(latestContent.title || "Live en cours")}')">
+                    🔴 Rejoindre le live
+               </button>`
+            : "";
+
     return `
         <div class="${cardClass}" data-user="${userId}" data-content-id="${latestContent.contentId}" data-tags="${tagDataset}" onclick="openImmersive('${userId}', '${latestContent.contentId}')">
             ${mediaHtml}
@@ -4260,6 +4267,7 @@ function renderUserCard(
                         <span class="courage-count">${latestContent.encouragementsCount || 0}</span>
                     </button>
                 </div>
+                ${liveCta}
                 ${userInfoHtml}
             </div>
         </div>
@@ -5097,6 +5105,9 @@ async function getFollowedUserIdSet(forceRefresh = false) {
     }
 }
 
+const IMMERSIVE_EXPLORATION_RATIO = 0.12; // ~12% of feed used for off-preference probing
+const IMMERSIVE_PREF_ALIGNMENT_THRESHOLD = 0.45; // below this, content is considered non-preference
+
 function scoreImmersiveContent(content, context) {
     const now = context.now || Date.now();
     const createdAt = content.createdAt
@@ -5139,17 +5150,16 @@ function scoreImmersiveContent(content, context) {
     }
     const seenPenalty =
         context.prefs.seen && context.prefs.seen[content.contentId] ? 0.8 : 0;
+    const preferenceScore =
+        typePref + statePref + userPref + tagPref + queryPref;
     const base =
         recency * 2.2 +
         engagement +
         followBoost +
-        typePref +
-        statePref +
-        userPref +
-        tagPref +
-        queryPref -
+        preferenceScore -
         seenPenalty;
-    return base + Math.random() * 0.08;
+    const score = base + Math.random() * 0.08;
+    return { score, preferenceScore };
 }
 
 function interleaveByUser(contents) {
@@ -5182,18 +5192,54 @@ async function getPersonalizedFeed(contents) {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 20)
         .map(([token, score]) => ({ token, score }));
-    const scored = contents.map((item) => ({
-        item,
-        score: scoreImmersiveContent(item, {
+    const scored = contents.map((item) => {
+        const { score, preferenceScore } = scoreImmersiveContent(item, {
             prefs,
             followedSet,
             now,
             topQueries,
-        }),
-    }));
+        });
+        return { item: { ...item }, score, preferenceScore };
+    });
+
     scored.sort((a, b) => b.score - a.score);
+    markExplorationInterest(scored);
+
     const ranked = scored.map((s) => s.item);
     return interleaveByUser(ranked);
+}
+
+function markExplorationInterest(scoredItems) {
+    if (!Array.isArray(scoredItems) || scoredItems.length === 0) return;
+
+    const targetRaw = Math.round(scoredItems.length * IMMERSIVE_EXPLORATION_RATIO);
+    const targetCount = Math.max(1, targetRaw);
+
+    const candidates = scoredItems.filter(
+        ({ preferenceScore }) =>
+            (preferenceScore || 0) <= IMMERSIVE_PREF_ALIGNMENT_THRESHOLD,
+    );
+
+    if (candidates.length === 0) return;
+
+    const cappedTarget = Math.min(targetCount, candidates.length);
+    const step = Math.max(1, Math.floor(candidates.length / cappedTarget));
+
+    let picked = 0;
+    for (let i = 0; i < candidates.length && picked < cappedTarget; i += step) {
+        candidates[i].item.__askInterest = true;
+        picked += 1;
+    }
+
+    // If rounding left us short, fill sequentially
+    let idx = 0;
+    while (picked < cappedTarget && idx < candidates.length) {
+        if (!candidates[idx].item.__askInterest) {
+            candidates[idx].item.__askInterest = true;
+            picked += 1;
+        }
+        idx += 1;
+    }
 }
 
 // Helper to render header
@@ -5236,12 +5282,33 @@ async function renderImmersiveHeader(user) {
 async function renderImmersiveFeed(contents) {
     let encouragedContentIds = new Set();
     const followMap = new Map();
+    const liveStreamMap = new Map(); // userId -> live row
 
     const arcIdsForImmersive = (contents || [])
         .filter((c) => c && c.arcId)
         .map((c) => c.arcId);
     if (arcIdsForImmersive.length > 0) {
         await preloadArcCollaborators(arcIdsForImmersive);
+    }
+
+    // Pré-charger les lives actifs des auteurs présents dans le feed
+    try {
+        const userIds = Array.from(
+            new Set((contents || []).map((c) => c && c.userId).filter(Boolean)),
+        );
+        if (userIds.length > 0) {
+            const { data: liveRows } = await supabase
+                .from("streaming_sessions")
+                .select("id, user_id, title, status")
+                .eq("status", "live")
+                .in("user_id", userIds);
+            (liveRows || []).forEach((row) => {
+                if (!row?.user_id || !row?.id) return;
+                liveStreamMap.set(row.user_id, row);
+            });
+        }
+    } catch (e) {
+        console.warn("Impossible de précharger les lives pour l'immersive feed", e);
     }
 
     // Fetch user encouragements if logged in
@@ -5296,6 +5363,10 @@ async function renderImmersiveFeed(contents) {
                     : content.state === "failure"
                       ? "#Bloqué"
                       : "#Pause";
+            const liveRow =
+                content.type === "live"
+                    ? liveStreamMap.get(content.userId) || null
+                    : null;
             const isAnnouncement = isAnnouncementContent(content);
             const timeLabel = timeAgo(content.createdAt || content.created_at);
             const replyCount = isAnnouncement
@@ -5337,7 +5408,23 @@ async function renderImmersiveFeed(contents) {
                 if (content.type === "video") {
                     mediaHtml = `
                     <div class="immersive-video-wrap" style="position: relative; width: 100%; height: 100%;">
-                        <video id="immersive-video-${content.contentId}" class="immersive-video" src="${content.mediaUrl}" playsinline webkit-playsinline autoplay muted loop preload="auto" style="width: 100%; height: 100%; object-fit: contain;" data-content-id="${content.contentId}" disablePictureInPicture></video>
+                        <video
+                            id="immersive-video-${content.contentId}"
+                            class="immersive-video"
+                            data-src="${content.mediaUrl}"
+                            playsinline
+                            webkit-playsinline
+                            autoplay
+                            muted
+                            loop
+                            preload="metadata"
+                            style="width: 100%; height: 100%; object-fit: contain;"
+                            data-content-id="${content.contentId}"
+                            disablePictureInPicture
+                        ></video>
+                        <div class="video-buffering-spinner" aria-hidden="true">
+                            <div class="spinner-ring"></div>
+                        </div>
                         <div class="video-fallback">
                             <img src="icons/play.svg" alt="Play" width="56" height="56">
                             <span>Vidéo</span>
@@ -5369,12 +5456,23 @@ async function renderImmersiveFeed(contents) {
                     ? `<span class="step-indicator">Jour ${content.dayNumber}</span>`
                     : "";
 
-            const moodActionsHtml = `
+            const isLiveContent = content.type === "live";
+            const liveJoinHtml =
+                isLiveContent && liveRow
+                    ? `<button class="mood-btn live-join-btn" onclick="event.stopPropagation(); openLiveStreamById('${liveRow.id}', '${content.userId}', '${escapeHtml(liveRow.title || content.title || "Live en cours")}')">🔴 Rejoindre le live</button>`
+                    : isLiveContent
+                        ? `<button class="mood-btn live-join-btn" onclick="event.stopPropagation(); openLiveStreamForUser('${content.userId}', '${escapeHtml(content.title || "Live en cours")}')">🔴 Rejoindre le live</button>`
+                        : "";
+
+            const moodActionsHtml = content.__askInterest
+                ? `
                 <div class="mood-actions">
                     <button class="mood-btn" onclick="event.stopPropagation(); handleDiscoverInterest('${content.contentId}', 'like')">Intéressé</button>
                     <button class="mood-btn" onclick="event.stopPropagation(); handleDiscoverInterest('${content.contentId}', 'dislike')">Pas intéressé</button>
+                    ${liveJoinHtml}
                 </div>
-            `;
+            `
+                : liveJoinHtml;
 
             return `
             <div class="immersive-post" data-content-id="${content.contentId}" data-user-id="${content.userId}">
@@ -5435,6 +5533,24 @@ async function renderImmersiveFeed(contents) {
         .join("");
 }
 
+// Squelettes de chargement pour le feed immersif
+function renderImmersiveSkeleton(count = 3) {
+    const items = [];
+    for (let i = 0; i < count; i++) {
+        items.push(`
+            <div class="immersive-post skeleton">
+                <div class="immersive-video-wrap skeleton-block"></div>
+                <div class="immersive-meta skeleton-meta">
+                    <div class="skeleton-line short"></div>
+                    <div class="skeleton-line"></div>
+                    <div class="skeleton-line"></div>
+                </div>
+            </div>
+        `);
+    }
+    return items.join("");
+}
+
 // Backward compatibility
 async function renderImmersiveContent(userId) {
     const contents = getUserContentLocal(userId);
@@ -5467,7 +5583,9 @@ async function openImmersive(startUserId, startContentId = null) {
     // Initial loading state
     overlay.innerHTML = `
         <div class="close-immersive" onclick="closeImmersive()">✕</div>
-        <div id="immersive-content-container" style="display:flex;justify-content:center;align-items:center;height:100vh;color:white;">Chargement...</div>
+        <div id="immersive-content-container" class="immersive-skeleton-container">
+            ${renderImmersiveSkeleton(4)}
+        </div>
     `;
     overlay.style.display = "block";
     document.body.style.overflow = "hidden";
@@ -5643,6 +5761,7 @@ async function openImmersive(startUserId, startContentId = null) {
 
         // Setup video play/pause on scroll
         setTimeout(() => {
+            setupImmersiveLazyLoad();
             setupImmersiveObserver();
             setupImmersiveVideoUI();
             setupImmersiveSnapNav();
@@ -5703,6 +5822,20 @@ function getActiveImmersiveVideo() {
     return bestScore >= 0.4 ? best : null; // au moins 40% visible
 }
 
+// Assure que la vidéo immersive est chargée (lazy) avant lecture
+function ensureImmersiveVideoLoaded(video, autoplay = false) {
+    if (!video) return;
+    if (video.dataset.loaded === "1") return;
+    const src = video.dataset.src;
+    if (!src) return;
+    video.src = src;
+    video.dataset.loaded = "1";
+    // On garde preload metadata (déjà dans le markup)
+    if (autoplay) {
+        video.play().catch(() => {});
+    }
+}
+
 function setupImmersiveObserver() {
     const posts = document.querySelectorAll(".immersive-post");
     const headerContainer = document.getElementById(
@@ -5719,6 +5852,7 @@ function setupImmersiveObserver() {
                 if (entry.isIntersecting) {
                     // La vidéo est visible - la jouer
                     if (video) {
+                        ensureImmersiveVideoLoaded(video, true);
                         muteOtherImmersiveVideos(video);
                         video.muted = !window.__immersiveSoundUnlocked;
                         video.play().catch((error) => {
@@ -5783,11 +5917,13 @@ function setupImmersiveVideoUI() {
     wraps.forEach((wrap) => {
         const video = wrap.querySelector("video.immersive-video");
         const playIcon = wrap.querySelector(".immersive-video-play");
+        const spinner = wrap.querySelector(".video-buffering-spinner");
         if (!video || !playIcon) return;
         video.loop = true;
 
         const updateOverlay = () => {
             playIcon.style.display = video.paused ? "block" : "none";
+            if (spinner) spinner.style.display = video.paused ? "flex" : "none";
         };
 
         updateOverlay();
@@ -5799,6 +5935,7 @@ function setupImmersiveVideoUI() {
             "loadeddata",
             () => {
                 wrap.classList.add("is-ready");
+                if (spinner) spinner.style.display = "none";
             },
             { once: true },
         );
@@ -5806,15 +5943,23 @@ function setupImmersiveVideoUI() {
             "error",
             () => {
                 wrap.classList.add("has-error");
+                if (spinner) spinner.style.display = "none";
             },
             { once: true },
         );
+        video.addEventListener("waiting", () => {
+            if (spinner) spinner.style.display = "flex";
+        });
+        video.addEventListener("canplay", () => {
+            if (spinner) spinner.style.display = "none";
+        });
 
         wrap.addEventListener("click", () => {
             if (video.paused) {
                 if (!window.__immersiveSoundUnlocked) {
                     window.__immersiveSoundUnlocked = true;
                 }
+                ensureImmersiveVideoLoaded(video, true);
                 muteOtherImmersiveVideos(video);
                 video.muted = false;
                 video.play().catch(() => {});
@@ -5829,6 +5974,9 @@ function setupImmersiveVideoUI() {
 
     // Initialiser l'activation globale du son
     initGlobalSoundActivation();
+
+    // Activer le lazy-load avec préchargement progressif
+    setupImmersiveLazyLoad();
 }
 
 // Fonction pour démarrer automatiquement les vidéos visibles
@@ -5839,6 +5987,7 @@ function setupVideoAutoplay(video, container) {
             entries.forEach((entry) => {
                 if (entry.isIntersecting) {
                     // La vidéo est visible - tenter de la jouer
+                    ensureImmersiveVideoLoaded(video, true);
                     muteOtherImmersiveVideos(video);
                     video.muted = !window.__immersiveSoundUnlocked;
                     video
@@ -5867,6 +6016,47 @@ function setupVideoAutoplay(video, container) {
     observer.observe(container);
 }
 
+// Lazy-load + préchargement progressif des vidéos immersives
+function setupImmersiveLazyLoad() {
+    const videos = document.querySelectorAll("video.immersive-video");
+    if (!videos.length || typeof IntersectionObserver === "undefined") return;
+
+    videos.forEach((video, idx) => {
+        video.dataset.index = idx;
+        // si première vidéo, charger immédiatement pour une première frame rapide
+        if (idx === 0) {
+            ensureImmersiveVideoLoaded(video, false);
+        }
+    });
+
+    const observer = new IntersectionObserver(
+        (entries) => {
+            entries.forEach((entry) => {
+                const video = entry.target;
+                if (entry.isIntersecting) {
+                    ensureImmersiveVideoLoaded(video, false);
+
+                    // Précharger la vidéo suivante pour la fluidité
+                    const nextIdx = Number(video.dataset.index || 0) + 1;
+                    const next = document.querySelector(
+                        `video.immersive-video[data-index="${nextIdx}"]`,
+                    );
+                    if (next) ensureImmersiveVideoLoaded(next, false);
+
+                    observer.unobserve(video);
+                }
+            });
+        },
+        {
+            root: null,
+            rootMargin: "280px 0px", // charger avant d'entrer à l'écran
+            threshold: 0.2,
+        },
+    );
+
+    videos.forEach((video) => observer.observe(video));
+}
+
 // Activation globale du son pour toutes les vidéos
 function initGlobalSoundActivation() {
     let soundActivated = false;
@@ -5879,6 +6069,7 @@ function initGlobalSoundActivation() {
         // Activer le son uniquement pour la vidéo immersive la plus visible
         const active = getActiveImmersiveVideo();
         if (active) {
+            ensureImmersiveVideoLoaded(active, true);
             muteOtherImmersiveVideos(active);
             active.muted = false;
             active.play().catch(() => {});
@@ -8448,6 +8639,50 @@ async function createLiveContent(title, description) {
     }
 }
 
+// Naviguer vers le live actif d'un utilisateur (si disponible)
+async function openLiveStreamForUser(userId, fallbackTitle = "Live") {
+    try {
+        if (!userId || typeof supabase === "undefined") return;
+        const { data, error } = await supabase
+            .from("streaming_sessions")
+            .select("id, title, user_id, status")
+            .eq("user_id", userId)
+            .eq("status", "live")
+            .order("started_at", { ascending: false })
+            .limit(1)
+            .single();
+        if (error || !data) {
+            ToastManager?.info("Live indisponible", "Aucun live actif trouvé.");
+            const safeTitle = encodeURIComponent(
+                (fallbackTitle || "Live").trim(),
+            );
+            window.location.href = `stream.html?host=${userId}&title=${safeTitle}&live=1`;
+            return;
+        }
+        const liveTitle = encodeURIComponent(
+            (data.title || fallbackTitle || "Live").trim(),
+        );
+        window.location.href = `stream.html?id=${data.id}&host=${data.user_id}&title=${liveTitle}`;
+    } catch (e) {
+        console.error("openLiveStreamForUser error", e);
+        ToastManager?.error("Impossible d'ouvrir le live", e.message || "");
+    }
+}
+window.openLiveStreamForUser = openLiveStreamForUser;
+
+function openLiveStreamById(streamId, hostId = null, fallbackTitle = "Live") {
+    if (!streamId) {
+        if (hostId) {
+            openLiveStreamForUser(hostId, fallbackTitle);
+        }
+        return;
+    }
+    const title = encodeURIComponent((fallbackTitle || "Live").trim());
+    const hostPart = hostId ? `&host=${hostId}` : "";
+    window.location.href = `stream.html?id=${streamId}${hostPart}&title=${title}`;
+}
+window.openLiveStreamById = openLiveStreamById;
+
 /* ========================================
    CRÉATION DE CONTENU
    ======================================== */
@@ -9260,6 +9495,20 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 window.openCreateMenu = openCreateMenu;
 
+// Rafraîchissement périodique du feed (inclut les lives) pour compenser toute latence realtime
+const LIVE_REFRESH_MS = 20000;
+let liveRefreshTimer = null;
+
+function startLiveAutoRefresh() {
+    if (liveRefreshTimer) clearInterval(liveRefreshTimer);
+    liveRefreshTimer = setInterval(() => {
+        if (document.hidden) return; // éviter du travail inutile en arrière-plan
+        if (typeof renderDiscoverGrid === "function") {
+            renderDiscoverGrid();
+        }
+    }, LIVE_REFRESH_MS);
+}
+
 /* ========================================
    REALTIME SUBSCRIPTIONS
    ======================================== */
@@ -9344,6 +9593,8 @@ function subscribeToRealtime() {
         )
         .subscribe();
 
+    // Démarrer un rafraîchissement de secours pour le feed (lives inclus)
+    startLiveAutoRefresh();
 }
 
 /* ========================================
@@ -9439,6 +9690,7 @@ function initializeVideoControls() {
         } else if (video.classList.contains("immersive-video")) {
             video.muted = true; // Démarrer muet, sera démuté uniquement pour la vidéo active
             video.loop = true; // Toujours en boucle
+            video.removeAttribute("src"); // sera renseigné en lazy-load
         }
 
         // Ajouter des gestionnaires pour les interactions utilisateur
