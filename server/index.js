@@ -152,8 +152,8 @@ function buildPushPayload(notification) {
   };
 
   const title = typeTitleMap[notification.type] || 'Notification XERA';
-  const icon = `${PRIMARY_ORIGIN.replace(/\\/$/, '')}/icons/logo.png`;
-  const link = notification.link || `${PRIMARY_ORIGIN.replace(/\\/$/, '')}/profile.html?user=${notification.user_id}`;
+  const icon = `${PRIMARY_ORIGIN.replace(/\/$/, '')}/icons/logo.png`;
+  const link = normalizeNotificationLink(notification) || `${PRIMARY_ORIGIN.replace(/\/$/, '')}/profile.html?user=${notification.user_id}`;
 
   return {
     title,
@@ -163,6 +163,27 @@ function buildPushPayload(notification) {
     tag: notification.id,
     renotify: false
   };
+}
+
+function normalizeNotificationLink(notification) {
+  const base = PRIMARY_ORIGIN.replace(/\/$/, '');
+  const raw = (notification && notification.link) || '';
+  if (!raw) return '';
+  const streamMatch = raw.match(/\/stream\/?([\w-]{8,})/i);
+  if (streamMatch) {
+    return `${base}/stream.html?id=${streamMatch[1]}`;
+  }
+  const profileMatch = raw.match(/\/profile\/?([\w-]{8,})/i);
+  if (profileMatch) {
+    return `${base}/profile.html?user=${profileMatch[1]}`;
+  }
+  const profileHtmlMatch = raw.match(/profile\.html\?user=([\w-]{8,})/i);
+  if (profileHtmlMatch) {
+    return `${base}/profile.html?user=${profileHtmlMatch[1]}`;
+  }
+  if (raw.startsWith('http')) return raw;
+  if (raw.startsWith('/')) return `${base}${raw}`;
+  return `${base}/${raw}`;
 }
 
 app.use((_req, res) => {

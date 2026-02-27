@@ -11,6 +11,8 @@ const VAPID_PUBLIC_KEY =
     "BKWmLmM6lYCuTb/YPmxIdeWJvMNjI1QDi0Kc36PiTKmEfybk4wky7VxsM6H/lK3dUXl1WQNXAB1zCbiTNGckdhM=";
 const RETURN_REMINDER_KEY = "xera-return-reminder-last";
 const RETURN_REMINDER_INTERVAL_MS = 18 * 60 * 60 * 1000; // 18h
+const notifUserCache = new Map();
+const notifStreamCache = new Map();
 let swRegistration = null;
 let pushSubscription = null;
 let returnReminderTimer = null;
@@ -111,7 +113,8 @@ async function loadNotifications() {
         
         if (error) throw error;
         
-        notifications = data || [];
+        notifications = normalizeNotifications(data || []);
+        await hydrateNotificationMetadata(notifications);
         updateNotificationBadge();
         
     } catch (error) {
@@ -143,13 +146,15 @@ function subscribeToNotifications() {
 
 // Gérer une nouvelle notification
 function handleNewNotification(notification) {
-    notifications.unshift(notification);
+    const normalized = normalizeNotification(notification);
+    notifications.unshift(normalized);
+    hydrateNotificationMetadata([normalized]).catch(() => {});
     
     // Afficher une notification toast
-    showNotificationToast(notification);
+    showNotificationToast(normalized);
 
     // Afficher une notification navigateur si permis
-    showBrowserNotification(notification);
+    showBrowserNotification(normalized);
     
     // Mettre à jour le badge
     updateNotificationBadge();
@@ -427,16 +432,27 @@ function renderNotifications() {
         return;
     }
     
-    container.innerHTML = notifications.map(notif => `
-        <div class="notification-item ${notif.read ? '' : 'unread'}" onclick="handleNotificationClick('${notif.id}')">
-            <div class="notification-icon">${getNotificationIcon(notif.type)}</div>
-            <div class="notification-content">
-                <div class="notification-title">${getNotificationTitle(notif)}</div>
-                <div class="notification-message">${notif.message}</div>
-                <div class="notification-time">${formatNotificationTime(notif.created_at)}</div>
+    container.innerHTML = notifications.map(notif => {
+        const avatar = notif.actor?.avatar;
+        const icon = getNotificationIcon(notif.type);
+        const displayName = notif.actor?.name || getNotificationTitle(notif);
+        return `
+        <div class="notification-item ${notif.read ? '' : 'unread'}" onclick="handleNotificationClick('${notif.id}')" style="display:flex;gap:12px;align-items:flex-start;">
+            <div class="notification-leading" style="width:42px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+                ${avatar
+                    ? `<img class="notification-avatar" src="${avatar}" alt="${displayName}" loading="lazy" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid var(--border-color, rgba(255,255,255,0.12));" />`
+                    : `<div class="notification-icon" style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--surface-alt, #1f2937);font-size:18px;">${icon}</div>`}
+            </div>
+            <div class="notification-content" style="flex:1;min-width:0;">
+                <div class="notification-title" style="font-weight:700;">${getNotificationTitle(notif)}</div>
+                <div class="notification-message" style="color:var(--text-secondary,#b5b5c3);">${notif.message}</div>
+                <div class="notification-meta" style="display:flex;gap:8px;align-items:center;color:var(--text-muted,#9ca3af);font-size:0.85rem;margin-top:4px;">
+                    <span class="notification-time">${formatNotificationTime(notif.created_at)}</span>
+                    ${displayName ? `<span class="notification-actor" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${displayName}</span>` : ""}
+                </div>
             </div>
         </div>
-    `).join('');
+    `}).join('');
 }
 
 // Gérer le clic sur une notification
@@ -460,8 +476,9 @@ async function handleNotificationClick(notificationId) {
         toggleNotificationPanel();
         
         // Naviguer vers la ressource liée (optionnel)
-        if (notif && notif.link) {
-            window.location.href = notif.link;
+        const targetLink = notif ? normalizeNotificationLink(notif) : null;
+        if (targetLink) {
+            window.location.href = targetLink;
         }
         
     } catch (error) {
@@ -597,4 +614,127 @@ async function sendSubscriptionToServer(subscription) {
     } catch (error) {
         console.warn("Impossible d'enregistrer l'abonnement push", error);
     }
+}
+
+// ---------------------------
+// Helpers de normalisation
+// ---------------------------
+function normalizeNotifications(list) {
+    return (list || []).map(normalizeNotification);
+}
+
+function normalizeNotification(notif) {
+    const n = { ...notif };
+    n.link = normalizeNotificationLink(n);
+    return n;
+}
+
+function normalizeNotificationLink(notif) {
+    const link = (notif && notif.link) || "";
+    if (!link) return "";
+    // stream links
+    const streamMatch = link.match(/\/stream\/?([a-f0-9-]{8,})/i);
+    if (streamMatch) {
+        const streamId = streamMatch[1];
+        return `stream.html?id=${streamId}`;
+    }
+    // explicit stream.html
+    if (link.includes("stream.html")) return link;
+    // profile links
+    const profileMatch = link.match(/\/profile\/?([a-f0-9-]{8,})/i);
+    if (profileMatch) {
+        return `profile.html?user=${profileMatch[1]}`;
+    }
+    const profileHtmlMatch = link.match(/profile\\.html\\?user=([a-f0-9-]{8,})/i);
+    if (profileHtmlMatch) {
+        return `profile.html?user=${profileHtmlMatch[1]}`;
+    }
+    // leave untouched
+    return link.startsWith("/") ? link.slice(1) : link;
+}
+
+function extractStreamId(link = "") {
+    const m =
+        link.match(/stream\.html\?[^#]*id=([a-f0-9-]{8,})/i) ||
+        link.match(/stream\.html\?id=([a-f0-9-]{8,})/i) ||
+        link.match(/\/stream\/?([a-f0-9-]{8,})/i);
+    return m ? m[1] : null;
+}
+
+function extractUserIdFromLink(link = "") {
+    const m =
+        link.match(/profile\.html\?[^#]*user=([a-f0-9-]{8,})/i) ||
+        link.match(/profile\.html\?user=([a-f0-9-]{8,})/i) ||
+        link.match(/\/profile\/?([a-f0-9-]{8,})/i);
+    return m ? m[1] : null;
+}
+
+async function hydrateNotificationMetadata(list) {
+    if (!Array.isArray(list) || list.length === 0) return;
+
+    const streamIds = new Set();
+    const userIds = new Set();
+
+    list.forEach((n) => {
+        const link = normalizeNotificationLink(n);
+        n.link = link;
+        const streamId = extractStreamId(link);
+        const userId = extractUserIdFromLink(link);
+        if (streamId) streamIds.add(streamId);
+        if (userId) userIds.add(userId);
+    });
+
+    let streamMap = {};
+    if (streamIds.size > 0) {
+        const missing = [...streamIds].filter((id) => !notifStreamCache.has(id));
+        if (missing.length > 0) {
+            const { data, error } = await supabase
+                .from("streaming_sessions")
+                .select("id, user_id, title, thumbnail_url")
+                .in("id", missing);
+            if (!error && data) {
+                data.forEach((row) => notifStreamCache.set(row.id, row));
+            }
+        }
+        streamMap = Object.fromEntries(
+            [...streamIds].map((id) => [id, notifStreamCache.get(id) || null]),
+        );
+        Object.values(streamMap)
+            .filter(Boolean)
+            .forEach((s) => s.user_id && userIds.add(s.user_id));
+    }
+
+    const missingUsers = [...userIds].filter((id) => !notifUserCache.has(id));
+    if (missingUsers.length > 0) {
+        const { data, error } = await supabase
+            .from("users")
+            .select("id, name, avatar")
+            .in("id", missingUsers);
+        if (!error && data) {
+            data.forEach((u) => notifUserCache.set(u.id, u));
+        }
+    }
+    const userMap = Object.fromEntries(
+        [...userIds].map((id) => [id, notifUserCache.get(id) || null]),
+    );
+
+    list.forEach((n) => {
+        const streamId = extractStreamId(n.link);
+        const userIdFromLink = extractUserIdFromLink(n.link);
+        const stream = streamId ? streamMap[streamId] : null;
+        const actorId = userIdFromLink || stream?.user_id || null;
+        if (actorId && userMap[actorId]) {
+            n.actor = userMap[actorId];
+        }
+        if (stream && stream.user_id) {
+            // Enrichir le lien pour inclure l'hôte, utile pour le lecteur
+            const hostPart = n.link.includes("host=") ? "" : `&host=${stream.user_id}`;
+            if (n.link.includes("stream.html")) {
+                n.link = `${n.link}${hostPart}`;
+            } else {
+                n.link = `stream.html?id=${stream.id}${hostPart}`;
+            }
+            n.stream = stream;
+        }
+    });
 }

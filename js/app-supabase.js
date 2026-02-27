@@ -563,6 +563,12 @@ async function initializeApp() {
                 SessionManager.saveSession(user);
             }
             updateNavigation(true);
+            // Démarrer les notifications maintenant que l'utilisateur est connu
+            if (typeof initializeNotifications === "function") {
+                initializeNotifications();
+                const notifBtn = document.getElementById("notification-btn");
+                if (notifBtn) notifBtn.style.display = "flex";
+            }
             if (discoverAvailable) {
                 navigateTo("discover");
             }
@@ -6197,6 +6203,14 @@ function setupImmersiveVideoUI() {
         video.addEventListener("canplay", () => {
             if (spinner) spinner.style.display = "none";
         });
+        // Si la lecture reprend après un buffering, rétablir le son si l'utilisateur l'avait autorisé
+        video.addEventListener("playing", () => {
+            if (window.__immersiveSoundUnlocked) {
+                muteOtherImmersiveVideos(video);
+                video.muted = false;
+            }
+            updateOverlay();
+        });
 
         wrap.addEventListener("click", () => {
             if (video.paused) {
@@ -6467,8 +6481,12 @@ function setupImmersiveArrowNav() {
     const btnDown = document.getElementById("immersive-arrow-down");
 
     if (!overlay || !arrows || !btnUp || !btnDown) return;
-    if (overlay.dataset.arrowNavBound === "true") return;
-    overlay.dataset.arrowNavBound = "true";
+
+    // Rebind safely when the immersive overlay is rebuilt
+    if (typeof overlay.__arrowCleanup === "function") {
+        overlay.__arrowCleanup();
+        overlay.__arrowCleanup = null;
+    }
 
     const getPosts = () =>
         Array.from(
@@ -6538,6 +6556,11 @@ function setupImmersiveArrowNav() {
     window.addEventListener("resize", updateDisabled);
 
     updateDisabled();
+
+    overlay.__arrowCleanup = () => {
+        overlay.removeEventListener("scroll", onScroll);
+        window.removeEventListener("resize", updateDisabled);
+    };
 }
 
 /* ========================================
