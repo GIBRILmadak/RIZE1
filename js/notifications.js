@@ -8,9 +8,12 @@ const NOTIF_PERMISSION_KEY = "xera-notif-permission-requested";
 const PUSH_SUBSCRIBE_URL = "/api/push/subscribe";
 const VAPID_PUBLIC_KEY =
     (typeof window !== "undefined" && window.VAPID_PUBLIC_KEY) ||
-    "<REMPLACEZ_PAR_VOTRE_CLE_PUBLIQUE_VAPID>";
+    "BKWmLmM6lYCuTb/YPmxIdeWJvMNjI1QDi0Kc36PiTKmEfybk4wky7VxsM6H/lK3dUXl1WQNXAB1zCbiTNGckdhM=";
+const RETURN_REMINDER_KEY = "xera-return-reminder-last";
+const RETURN_REMINDER_INTERVAL_MS = 18 * 60 * 60 * 1000; // 18h
 let swRegistration = null;
 let pushSubscription = null;
+let returnReminderTimer = null;
 
 // Initialiser les notifications
 async function initializeNotifications() {
@@ -80,6 +83,9 @@ async function setupPushNotifications() {
         if (pushSubscription) {
             await sendSubscriptionToServer(pushSubscription);
         }
+
+        // Planifier un rappel doux toutes les 18h
+        scheduleReturnReminder();
 
         // Écoute les resubscriptions envoyées par le SW
         navigator.serviceWorker.addEventListener("message", async (event) => {
@@ -231,6 +237,8 @@ function requestBrowserNotificationPermission(force = false) {
             localStorage.setItem(NOTIF_PERMISSION_KEY, "1");
             if (res !== "granted") {
                 console.info("Notifications navigateur non autorisées.");
+            } else {
+                scheduleReturnReminder();
             }
         });
     } catch (e) {
@@ -325,6 +333,53 @@ function showBrowserNotification(notification) {
         };
     } catch (e) {
         console.warn("Browser notification error:", e);
+    }
+}
+
+// Rappel périodique pour revenir sur XERA (toutes les 18h)
+function scheduleReturnReminder() {
+    if (typeof window === "undefined" || typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+
+    // Éviter les doublons de timer
+    if (returnReminderTimer) return;
+
+    const last = parseInt(localStorage.getItem(RETURN_REMINDER_KEY) || "0", 10);
+    const now = Date.now();
+    const elapsed = now - last;
+    const delay = elapsed >= RETURN_REMINDER_INTERVAL_MS
+        ? 0
+        : RETURN_REMINDER_INTERVAL_MS - elapsed;
+
+    const triggerReminder = async () => {
+        await showReturnReminderNotification();
+        localStorage.setItem(RETURN_REMINDER_KEY, Date.now().toString());
+        returnReminderTimer = null;
+        scheduleReturnReminder(); // planifie le prochain rappel
+    };
+
+    returnReminderTimer = setTimeout(triggerReminder, delay || RETURN_REMINDER_INTERVAL_MS);
+}
+
+async function showReturnReminderNotification() {
+    const title = "Continue ta trajectoire";
+    const body = "Reviens sur XERA pour poursuivre ta trajectoire et tes arcs.";
+    const options = {
+        body,
+        icon: "icons/logo.png",
+        tag: "xera-return-reminder",
+        renotify: false,
+    };
+
+    try {
+        if ("serviceWorker" in navigator) {
+            const reg = await navigator.serviceWorker.ready;
+            await reg.showNotification(title, options);
+        } else if (typeof Notification !== "undefined") {
+            new Notification(title, options);
+        }
+    } catch (e) {
+        console.warn("Impossible d'afficher le rappel 18h:", e);
     }
 }
 

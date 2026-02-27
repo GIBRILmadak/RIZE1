@@ -53,8 +53,7 @@
         function ChatMessage({ msg }) {
             const isOwn = msg.user_id && msg.user_id === window.currentUser?.id;
             const className = "chat-message" + (isOwn ? " own-message" : "");
-            const username =
-                msg.users?.name || msg.user_name || "Utilisateur";
+            const username = msg.users?.name || msg.user_name || "Utilisateur";
             const userId = msg.users?.id || msg.user_id;
             const usernameHtml =
                 typeof window.renderUsernameWithBadge === "function" && userId
@@ -81,9 +80,17 @@
                             className: "chat-username",
                             dangerouslySetInnerHTML: { __html: usernameHtml },
                         }),
-                        e("span", { className: "chat-timestamp" }, formatTime(msg.created_at)),
+                        e(
+                            "span",
+                            { className: "chat-timestamp" },
+                            formatTime(msg.created_at),
+                        ),
                     ),
-                    e("div", { className: "chat-message-text" }, msg.message || ""),
+                    e(
+                        "div",
+                        { className: "chat-message-text" },
+                        msg.message || "",
+                    ),
                 ),
             );
         }
@@ -106,16 +113,23 @@
                 React.Fragment,
                 null,
                 messages.map((m) =>
-                    e(ChatMessage, { key: m.id || m.created_at || Math.random(), msg: m }),
+                    e(ChatMessage, {
+                        key: m.id || m.created_at || Math.random(),
+                        msg: m,
+                    }),
                 ),
             );
         }
 
-        ReactDOM.createRoot(rootEl).render(e(React.StrictMode, null, e(ChatList)));
+        ReactDOM.createRoot(rootEl).render(
+            e(React.StrictMode, null, e(ChatList)),
+        );
     }
 
     if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", mountReact, { once: true });
+        document.addEventListener("DOMContentLoaded", mountReact, {
+            once: true,
+        });
     } else {
         mountReact();
     }
