@@ -9703,6 +9703,8 @@ async function openCreateMenu(
     const uploadContainer = document.getElementById("media-upload-container");
     const urlContainer = document.getElementById("media-url-container");
     const liveInput = document.getElementById("create-live-url");
+    const fileInput = document.getElementById("create-media-file");
+    const mediaUrlsInput = document.getElementById("create-media-urls");
     const dayGroup = container.querySelector(".form-group-day");
     const stateGroup = container.querySelector(".form-group-state");
     const arcGroup = container.querySelector(".form-group-arc");
@@ -9716,9 +9718,7 @@ async function openCreateMenu(
         const mediaTypeInput = document.getElementById("create-media-type");
 
         const dropZone = document.getElementById("create-media-dropzone");
-        const fileInput = document.getElementById("create-media-file");
         const loader = document.getElementById("create-media-loader");
-        const mediaUrlsInput = document.getElementById("create-media-urls");
 
         const typeButtons = Array.from(
             container.querySelectorAll(".type-quick button"),
