@@ -15,7 +15,7 @@ window.hasLoadedUsers = false;
 window.userLoadError = null;
 window.arcCollaboratorsCache = new Map();
 window.arcCollaboratorsPending = new Set();
-window.pendingCreatePostAfterArc = null;q
+window.pendingCreatePostAfterArc = null;
 let firstPostOnboardingHandled = false;
 const CONTENT_PREFETCH_BATCH_SIZE = 10;
 const CONTENT_FETCH_BATCH_SIZE = 50;
@@ -35,6 +35,17 @@ function getInitialProfileUserId() {
         return params.get("user") || params.get("u");
     } catch (error) {
         return null;
+    }
+}
+
+function safeFormatDate(date, options = { day: "numeric", month: "short" }) {
+    if (!date) return "";
+    const d = date instanceof Date ? date : new Date(date);
+    if (!Number.isFinite(d.getTime())) return "";
+    try {
+        return new Intl.DateTimeFormat("fr-FR", options).format(d);
+    } catch (e) {
+        return "";
     }
 }
 
@@ -501,6 +512,29 @@ async function initializeApp() {
     const initialProfileId = getInitialProfileUserId();
     const profileOnlyPage = isProfileOnlyPage();
     const discoverAvailable = hasDiscoverPage();
+
+    const hydratedDiscover = hydrateDiscoverFromCache();
+    if (hydratedDiscover) {
+        if (initialProfileId) {
+            hydrateProfileContentsFromCache(initialProfileId);
+        } else if (window.currentUserId) {
+            hydrateProfileContentsFromCache(window.currentUserId);
+        }
+        // Render immediately from cache to feel instant on slow networks.
+        Promise.resolve().then(async () => {
+            try {
+                await renderDiscoverGrid();
+                if (initialProfileId) {
+                    window.currentProfileViewed = initialProfileId;
+                    await renderProfileIntoContainer(initialProfileId);
+                } else if (window.currentUserId) {
+                    await renderProfileIntoContainer(window.currentUserId);
+                }
+            } catch (e) {
+                // ignore cache render failures
+            }
+        });
+    }
 
     // Timeout de sécurité : si rien ne se passe après 1 minute
     const safetyTimeout = setTimeout(() => {
@@ -1078,6 +1112,176 @@ function resetLoadedCollections() {
     Object.keys(userProjects || {}).forEach((key) => delete userProjects[key]);
 }
 
+const XERA_CACHE_USERS_KEY = "xera:cache:users";
+const XERA_CACHE_DISCOVER_LATEST_KEY = "xera:cache:discover:latest";
+const XERA_CACHE_DISCOVER_TS_KEY = "xera:cache:discover:ts";
+const XERA_CACHE_PROFILE_CONTENT_PREFIX = "xera:cache:profile:contents:";
+
+async function ensureOnlineOrNotify() {
+    try {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+            if (window.ToastManager) {
+                ToastManager.error(
+                    "Hors connexion",
+                    "Vous êtes hors connexion. Réessayez quand la connexion revient.",
+                );
+            } else {
+                alert(
+                    "Vous êtes hors connexion. Réessayez quand la connexion revient.",
+                );
+            }
+            return false;
+        }
+    } catch (e) {
+        /* ignore */
+    }
+    return true;
+}
+
+async function ensureFreshSupabaseSession() {
+    if (!supabase?.auth?.getSession) return { ok: true };
+    try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) return { ok: false, error };
+        const session = data?.session;
+        if (!session) return { ok: false, error: new Error("No session") };
+        const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+        const needsRefresh = expiresAt && expiresAt - Date.now() < 2 * 60 * 1000;
+        if (!needsRefresh) return { ok: true };
+        if (supabase.auth.refreshSession) {
+            const refreshed = await supabase.auth.refreshSession();
+            if (refreshed?.error) return { ok: false, error: refreshed.error };
+        }
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: e };
+    }
+}
+
+function setupPwaSwUpdateReload() {
+    try {
+        if (!("serviceWorker" in navigator)) return;
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+            try {
+                if (window.__xeraSwReloading) return;
+                window.__xeraSwReloading = true;
+                setTimeout(() => window.location.reload(), 150);
+            } catch (e) {
+                /* ignore */
+            }
+        });
+    } catch (e) {
+        /* ignore */
+    }
+}
+const XERA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function safeJsonParse(raw, fallback) {
+    try {
+        return raw ? JSON.parse(raw) : fallback;
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function withCacheBust(url, version) {
+    if (!url) return url;
+    try {
+        const v = version ? String(version) : String(Date.now());
+        const u = new URL(url, window.location.origin);
+        u.searchParams.set("v", v);
+        return u.toString();
+    } catch (e) {
+        const sep = url.includes("?") ? "&" : "?";
+        const v = version ? String(version) : String(Date.now());
+        return `${url}${sep}v=${encodeURIComponent(v)}`;
+    }
+}
+
+function persistDiscoverCache() {
+    try {
+        if (!Array.isArray(allUsers) || allUsers.length === 0) return;
+        localStorage.setItem(XERA_CACHE_USERS_KEY, JSON.stringify(allUsers));
+
+        const latestByUser = {};
+        allUsers.forEach((u) => {
+            const list = userContents?.[u.id];
+            if (Array.isArray(list) && list.length > 0) {
+                latestByUser[u.id] = list[0];
+            }
+        });
+        localStorage.setItem(
+            XERA_CACHE_DISCOVER_LATEST_KEY,
+            JSON.stringify(latestByUser),
+        );
+        localStorage.setItem(XERA_CACHE_DISCOVER_TS_KEY, Date.now().toString());
+    } catch (e) {
+        // ignore quota / privacy errors
+    }
+}
+
+function hydrateDiscoverFromCache() {
+    try {
+        const ts = parseInt(localStorage.getItem(XERA_CACHE_DISCOVER_TS_KEY) || "0", 10);
+        if (!ts || Date.now() - ts > XERA_CACHE_TTL_MS) return false;
+
+        const cachedUsers = safeJsonParse(
+            localStorage.getItem(XERA_CACHE_USERS_KEY),
+            null,
+        );
+        const cachedLatest = safeJsonParse(
+            localStorage.getItem(XERA_CACHE_DISCOVER_LATEST_KEY),
+            null,
+        );
+        if (!Array.isArray(cachedUsers) || cachedUsers.length === 0) return false;
+        if (!cachedLatest || typeof cachedLatest !== "object") return false;
+
+        allUsers = cachedUsers;
+        Object.keys(cachedLatest).forEach((uid) => {
+            const latest = cachedLatest[uid];
+            userContents[uid] = latest ? [latest] : [];
+        });
+        window.userLoadError = null;
+        window.hasLoadedUsers = true;
+        computeAmbassadors();
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function hydrateProfileContentsFromCache(userId) {
+    if (!userId) return false;
+    if (Array.isArray(userContents?.[userId]) && userContents[userId].length > 0) {
+        return true;
+    }
+    try {
+        const raw = localStorage.getItem(`${XERA_CACHE_PROFILE_CONTENT_PREFIX}${userId}`);
+        const cached = safeJsonParse(raw, null);
+        if (!Array.isArray(cached) || cached.length === 0) return false;
+        userContents[userId] = cached;
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function persistProfileContentsCache(userId) {
+    if (!userId) return;
+    try {
+        const list = userContents?.[userId];
+        if (!Array.isArray(list) || list.length === 0) return;
+        // Limit size to reduce quota pressure
+        const trimmed = list.slice(0, 80);
+        localStorage.setItem(
+            `${XERA_CACHE_PROFILE_CONTENT_PREFIX}${userId}`,
+            JSON.stringify(trimmed),
+        );
+    } catch (e) {
+        // ignore
+    }
+}
+
 async function preloadUserContents(users, { publicOnly = false } = {}) {
     const safeUsers = Array.isArray(users) ? users : [];
     if (safeUsers.length === 0) return;
@@ -1137,6 +1341,9 @@ async function preloadUserContents(users, { publicOnly = false } = {}) {
             });
         }
     }
+
+    // Keep a lightweight cache for instant discover/profile boot
+    persistDiscoverCache();
 }
 
 async function ensureUserProjectsLoaded(userId) {
@@ -1438,6 +1645,11 @@ function clearPendingCreatePostAfterArc() {
 async function maybeStartFirstPostFlow() {
     if (!window.currentUser || firstPostOnboardingHandled) return;
     if (!document.getElementById("create-modal")) return;
+    // N'afficher l'onboarding ARC que sur Discover
+    const isOnDiscover =
+        !!document.querySelector("#discover.active") ||
+        !!document.querySelector(".discover-grid");
+    if (!isOnDiscover) return;
     firstPostOnboardingHandled = true;
 
     const userId = window.currentUser.id;
@@ -1494,6 +1706,7 @@ function timeAgo(date) {
 
     const now = new Date();
     const past = new Date(date);
+    if (!Number.isFinite(past.getTime())) return "";
     const diffInSeconds = Math.floor((now - past) / 1000);
 
     if (diffInSeconds < 60) {
@@ -1515,10 +1728,62 @@ function timeAgo(date) {
         return `il y a ${diffInDays}j`;
     }
 
-    return new Intl.DateTimeFormat("fr-FR", {
-        day: "numeric",
-        month: "short",
-    }).format(past);
+    try {
+        return new Intl.DateTimeFormat("fr-FR", {
+            day: "numeric",
+            month: "short",
+        }).format(past);
+    } catch (e) {
+        return "";
+    }
+}
+
+function initXeraCarousels(root = document) {
+    const scope = root || document;
+    const carousels = Array.from(scope.querySelectorAll("[data-carousel]"));
+    carousels.forEach((carousel) => {
+        if (carousel.dataset.carouselInit === "1") return;
+        carousel.dataset.carouselInit = "1";
+
+        const track = carousel.querySelector(".xera-carousel-track");
+        if (!track) return;
+        const dots = Array.from(carousel.querySelectorAll(".xera-dot"));
+
+        const setActive = (index) => {
+            dots.forEach((d, i) => d.classList.toggle("active", i === index));
+        };
+
+        let ticking = false;
+        const updateFromScroll = () => {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(() => {
+                const width = track.clientWidth || 1;
+                const idx = Math.max(
+                    0,
+                    Math.min(
+                        dots.length - 1,
+                        Math.round(track.scrollLeft / width),
+                    ),
+                );
+                setActive(idx);
+                ticking = false;
+            });
+        };
+
+        track.addEventListener("scroll", updateFromScroll, { passive: true });
+        if (dots.length > 0) {
+            dots.forEach((dot) => {
+                dot.addEventListener("click", () => {
+                    const index = parseInt(dot.dataset.index || "0", 10);
+                    const width = track.clientWidth || 0;
+                    track.scrollTo({ left: width * index, behavior: "smooth" });
+                    setActive(index);
+                });
+            });
+            updateFromScroll();
+        }
+    });
 }
 
 // Convertir les données Supabase en format compatible avec le code existant
@@ -1541,6 +1806,22 @@ function convertSupabaseContent(supabaseContent) {
         : null;
     const rawDescription = supabaseContent.description || "";
     const { tags, cleanDescription } = extractTagsFromDescription(rawDescription);
+
+    let mediaUrls = [];
+    if (Array.isArray(supabaseContent.media_urls)) {
+        mediaUrls = supabaseContent.media_urls.filter(Boolean);
+    } else if (typeof supabaseContent.media_urls === "string") {
+        try {
+            const parsed = JSON.parse(supabaseContent.media_urls);
+            if (Array.isArray(parsed)) mediaUrls = parsed.filter(Boolean);
+        } catch (e) {
+            mediaUrls = [];
+        }
+    }
+    const mediaUrl = supabaseContent.media_url;
+    if ((!mediaUrls || mediaUrls.length === 0) && mediaUrl) {
+        mediaUrls = [mediaUrl];
+    }
     return {
         contentId: supabaseContent.id,
         userId: supabaseContent.user_id,
@@ -1553,7 +1834,8 @@ function convertSupabaseContent(supabaseContent) {
         description: cleanDescription,
         rawDescription,
         tags,
-        mediaUrl: supabaseContent.media_url,
+        mediaUrl: mediaUrl,
+        mediaUrls: mediaUrls,
         views: supabaseContent.views || 0,
         encouragementsCount: supabaseContent.encouragements_count || 0,
         createdAt: new Date(supabaseContent.created_at),
@@ -2223,12 +2505,10 @@ function renderAnnouncements() {
             const createdAt = item.created_at
                 ? new Date(item.created_at)
                 : null;
-            const timeLabel = createdAt
-                ? new Intl.DateTimeFormat("fr-FR", {
-                      day: "numeric",
-                      month: "short",
-                  }).format(createdAt)
-                : "";
+            const timeLabel = safeFormatDate(createdAt, {
+                day: "numeric",
+                month: "short",
+            });
             return `
             <div class="announcement-card ${item.is_pinned ? "pinned" : ""}">
                 <div class="announcement-header">
@@ -2439,12 +2719,10 @@ function renderAdminAnnouncementsList() {
             const createdAt = item.created_at
                 ? new Date(item.created_at)
                 : null;
-            const timeLabel = createdAt
-                ? new Intl.DateTimeFormat("fr-FR", {
-                      day: "numeric",
-                      month: "short",
-                  }).format(createdAt)
-                : "";
+            const timeLabel = safeFormatDate(createdAt, {
+                day: "numeric",
+                month: "short",
+            });
             return `
             <div class="announcement-card ${item.is_pinned ? "pinned" : ""}">
                 <div class="announcement-header">
@@ -4566,12 +4844,10 @@ async function loadAdminUserContents(userId) {
             .map((c) => {
                 const title = escapeHtml(c.title || "Sans titre");
                 const cid = escapeHtml(c.id || "");
-                const dateLabel = c.created_at
-                    ? new Intl.DateTimeFormat("fr-FR", {
-                          day: "2-digit",
-                          month: "2-digit",
-                      }).format(new Date(c.created_at))
-                    : "";
+                const dateLabel = safeFormatDate(c.created_at, {
+                    day: "2-digit",
+                    month: "2-digit",
+                });
                 return `
                 <button type="button"
                     class="btn-ghost"
@@ -5023,6 +5299,27 @@ async function renderDiscoverGrid() {
     const grid = document.querySelector(".discover-grid");
     if (!grid) return;
     const waitMessage = document.querySelector(".wait");
+
+    if (
+        typeof window.renderDiscoverGridReact === "function" &&
+        window.React &&
+        window.ReactDOM
+    ) {
+        try {
+            const didReactRender = window.renderDiscoverGridReact(grid);
+            if (didReactRender) {
+                if (waitMessage) {
+                    waitMessage.classList.add("is-hidden");
+                }
+                if (typeof window.setupDiscoverVideoInteractions === "function") {
+                    window.setupDiscoverVideoInteractions();
+                }
+                return;
+            }
+        } catch (e) {
+            // fallback to vanilla rendering below
+        }
+    }
 
     let liveStreams = [];
     try {
@@ -5654,14 +5951,19 @@ async function renderImmersiveFeed(contents) {
             });
 
             let mediaHtml = "";
-            if (content.mediaUrl) {
+            const mediaList = Array.isArray(content.mediaUrls)
+                ? content.mediaUrls.filter(Boolean)
+                : content.mediaUrl
+                  ? [content.mediaUrl]
+                  : [];
+            if (mediaList.length > 0) {
                 if (content.type === "video") {
                     mediaHtml = `
                     <div class="immersive-video-wrap" style="position: relative; width: 100%; height: 100%;">
                         <video
                             id="immersive-video-${content.contentId}"
                             class="immersive-video"
-                            data-src="${content.mediaUrl}"
+                            data-src="${mediaList[0]}"
                             playsinline
                             webkit-playsinline
                             autoplay
@@ -5683,7 +5985,30 @@ async function renderImmersiveFeed(contents) {
                     </div>
                 `;
                 } else {
-                    mediaHtml = `<div class="immersive-image-wrap"><img src="${content.mediaUrl}" class="immersive-image" alt="${content.title || "Media"}"></div>`;
+                    if (mediaList.length > 1) {
+                        const slides = mediaList
+                            .map(
+                                (u) =>
+                                    `<div class="xera-carousel-slide"><img src="${u}" class="immersive-image" alt="${content.title || "Media"}" loading="lazy" decoding="async"></div>`,
+                            )
+                            .join("");
+                        const dots = `<div class="xera-carousel-dots">${mediaList
+                            .map(
+                                (_, i) =>
+                                    `<span class="xera-dot ${i === 0 ? "active" : ""}" data-index="${i}"></span>`,
+                            )
+                            .join("")}</div>`;
+                        mediaHtml = `
+                            <div class="immersive-image-wrap">
+                                <div class="xera-carousel xera-carousel--immersive" data-carousel>
+                                    <div class="xera-carousel-track">${slides}</div>
+                                    ${dots}
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        mediaHtml = `<div class="immersive-image-wrap"><img src="${mediaList[0]}" class="immersive-image" alt="${content.title || "Media"}"></div>`;
+                    }
                 }
             } else {
                 const textBody =
@@ -5842,6 +6167,12 @@ async function openImmersive(startUserId, startContentId = null) {
     handleLoginPromptContext();
 
     try {
+        initXeraCarousels(overlay);
+    } catch (e) {
+        /* ignore */
+    }
+
+    try {
         // Get ALL content sorted by date, then personalize
         let allContents = await getPersonalizedFeed(getAllFeedContent());
         console.log("All contents found:", allContents.length);
@@ -5990,6 +6321,12 @@ async function openImmersive(startUserId, startContentId = null) {
                 </button>
             </div>
         `;
+
+        try {
+            initXeraCarousels(overlay);
+        } catch (e) {
+            /* ignore */
+        }
 
         // Scroll to the starting content
         if (startIndex >= 0) {
@@ -6990,10 +7327,10 @@ async function renderProfileTimeline(userId) {
 
             const content = item.content;
             const itemClass = `item-${content.state}`;
-            const dateFormatted = new Intl.DateTimeFormat("fr-FR", {
+            const dateFormatted = safeFormatDate(content.createdAt, {
                 month: "long",
                 day: "numeric",
-            }).format(content.createdAt);
+            });
 
             const timeAgoStr = timeAgo(content.createdAt);
             const dateDisplay = `${dateFormatted} - Jour ${content.dayNumber} <span style="opacity: 0.5; font-size: 0.85em; margin-left: 8px;">(${timeAgoStr})</span>`;
@@ -7152,10 +7489,10 @@ async function renderProfileTimeline(userId) {
                         } else if (content.state === "pause") {
                             stateBadgeSvg = badgeSVGs.pause;
                         }
-                        const dateFormatted = new Intl.DateTimeFormat("fr-FR", {
+                        const dateFormatted = safeFormatDate(content.createdAt, {
                             month: "long",
                             day: "numeric",
-                        }).format(content.createdAt);
+                        });
 
                         const timeAgoStr = timeAgo(content.createdAt);
                         const dateDisplay = `${dateFormatted} - Jour ${content.dayNumber} <span style="opacity: 0.5; font-size: 0.85em; margin-left: 8px;">(${timeAgoStr})</span>`;
@@ -7466,18 +7803,65 @@ async function renderProfileIntoContainer(userId) {
     window.currentProfileViewed = userId;
     const profileContainer = document.querySelector(".profile-container");
     if (!profileContainer) return;
+
+    const finalizeProfileRender = () => {
+        try {
+            persistProfileContentsCache(userId);
+        } catch (e) {
+            /* ignore */
+        }
+
+        try {
+            initXeraCarousels(profileContainer);
+        } catch (e) {
+            /* ignore */
+        }
+
+        // Community Account Visuals
+        const user = getUser(userId);
+        if (
+            user &&
+            (user.account_subtype === "community" ||
+                user.accountSubtype === "community")
+        ) {
+            profileContainer.classList.add("is-community");
+        } else {
+            profileContainer.classList.remove("is-community");
+        }
+
+        profileContainer.classList.toggle("arc-view", !!window.selectedArcId);
+        if (window.loadUserArcs) window.loadUserArcs(userId);
+        if (window.renderProfileAnalytics) window.renderProfileAnalytics(userId);
+        if (window.renderWeeklyProgressChart)
+            window.renderWeeklyProgressChart(userId);
+        if (window.renderInfluenceReach) window.renderInfluenceReach(userId);
+        maybeShowAmbassadorWelcome(userId);
+    };
+
+    if (
+        typeof window.renderProfileReact === "function" &&
+        window.React &&
+        window.ReactDOM
+    ) {
+        try {
+            const didReactRender = window.renderProfileReact(
+                profileContainer,
+                userId,
+                finalizeProfileRender,
+            );
+            if (didReactRender) {
+                return;
+            }
+        } catch (e) {
+            // fallback to vanilla
+        }
+    }
+
     profileContainer.innerHTML = getProfileLoadingMarkup();
     profileContainer.classList.remove("arc-view");
     try {
         profileContainer.innerHTML = await renderProfileTimeline(userId);
-        
-        // Community Account Visuals
-        const user = getUser(userId);
-        if (user && (user.account_subtype === 'community' || user.accountSubtype === 'community')) {
-            profileContainer.classList.add('is-community');
-        } else {
-            profileContainer.classList.remove('is-community');
-        }
+        finalizeProfileRender();
     } catch (error) {
         console.error("Erreur renderProfileTimeline:", error);
         profileContainer.innerHTML = `
@@ -7488,12 +7872,6 @@ async function renderProfileIntoContainer(userId) {
             </div>
         `;
     }
-    profileContainer.classList.toggle("arc-view", !!window.selectedArcId);
-    if (window.loadUserArcs) window.loadUserArcs(userId);
-    if (window.renderProfileAnalytics) window.renderProfileAnalytics(userId);
-    if (window.renderWeeklyProgressChart) window.renderWeeklyProgressChart(userId);
-    if (window.renderInfluenceReach) window.renderInfluenceReach(userId);
-    maybeShowAmbassadorWelcome(userId);
 }
 
 function getProfileLoadingMarkup() {
@@ -7594,7 +7972,12 @@ window.renderWeeklyProgressChart = async function (userId) {
 
         const labels = days.map((d) => {
             const dt = new Date(d);
-            return dt.toLocaleDateString(undefined, { weekday: "short" });
+            if (!Number.isFinite(dt.getTime())) return "";
+            try {
+                return dt.toLocaleDateString(undefined, { weekday: "short" });
+            } catch (e) {
+                return "";
+            }
         });
         const data = days.map((d) => counts[d]);
 
@@ -8319,9 +8702,32 @@ async function openSettings(userId) {
                     .value,
             };
 
+            const okOnline = await ensureOnlineOrNotify();
+            if (!okOnline) {
+                btnSave.disabled = false;
+                btnSave.textContent = originalText;
+                return;
+            }
+            const sessionCheck = await ensureFreshSupabaseSession();
+            if (!sessionCheck.ok) {
+                console.warn("Session refresh failed", sessionCheck.error);
+            }
+
             const result = await upsertUserProfile(userId, profileData);
 
             if (result.success) {
+                const updatedAt = result.data?.updated_at || new Date().toISOString();
+                try {
+                    if (result.data?.avatar) {
+                        result.data.avatar = withCacheBust(result.data.avatar, updatedAt);
+                    }
+                    if (result.data?.banner) {
+                        result.data.banner = withCacheBust(result.data.banner, updatedAt);
+                    }
+                } catch (e) {
+                    /* ignore */
+                }
+
                 // Update local state
                 const userIndex = allUsers.findIndex((u) => u.id === userId);
                 if (userIndex !== -1) {
@@ -8330,6 +8736,40 @@ async function openSettings(userId) {
                         ...allUsers[userIndex],
                         ...result.data,
                     };
+                }
+
+                // Keep current session user fresh (important for PWA cache-first flows)
+                try {
+                    if (window.currentUser && window.currentUser.id === userId) {
+                        window.currentUser = {
+                            ...window.currentUser,
+                            ...result.data,
+                        };
+                        currentUser = window.currentUser;
+                    }
+                } catch (e) {
+                    /* ignore */
+                }
+
+                // Persist users cache so the PWA doesn't keep stale data after restart
+                try {
+                    if (Array.isArray(allUsers) && allUsers.length > 0) {
+                        localStorage.setItem(
+                            XERA_CACHE_USERS_KEY,
+                            JSON.stringify(allUsers),
+                        );
+                    }
+                } catch (e) {
+                    /* ignore */
+                }
+
+                // Also refresh derived discover cache if used
+                try {
+                    if (typeof persistDiscoverCache === "function") {
+                        persistDiscoverCache();
+                    }
+                } catch (e) {
+                    /* ignore */
                 }
 
                 // Reload profile view
@@ -8343,6 +8783,15 @@ async function openSettings(userId) {
                 );
                 if (userCard) {
                     userCard.outerHTML = renderUserCard(userId);
+                }
+
+                // Refresh discover React island if present
+                try {
+                    if (window.ReactIslands?.renderDiscover) {
+                        window.ReactIslands.renderDiscover();
+                    }
+                } catch (e) {
+                    /* ignore */
                 }
 
                 closeSettings();
@@ -9229,6 +9678,7 @@ async function openCreateMenu(
                     </div>
 
                     <input type="hidden" id="create-media-url" value="${isEdit && (existingContent.media_url || existingContent.mediaUrl) ? existingContent.media_url || existingContent.mediaUrl : ""}">
+                    <input type="hidden" id="create-media-urls" value="">
                     <input type="hidden" id="create-media-type" value="${isEdit && existingContent.type ? existingContent.type : defaultTraceType}">
                 </div>
 
@@ -9268,6 +9718,7 @@ async function openCreateMenu(
         const dropZone = document.getElementById("create-media-dropzone");
         const fileInput = document.getElementById("create-media-file");
         const loader = document.getElementById("create-media-loader");
+        const mediaUrlsInput = document.getElementById("create-media-urls");
 
         const typeButtons = Array.from(
             container.querySelectorAll(".type-quick button"),
@@ -9297,6 +9748,7 @@ async function openCreateMenu(
                 typeSelect.disabled = true;
                 mediaTypeInput.value = "text";
                 fileInput.accept = "image/*";
+                fileInput.multiple = true;
                 uploadContainer.style.display = "block";
                 urlContainer.style.display = "none";
                 if (dayGroup) {
@@ -9322,6 +9774,7 @@ async function openCreateMenu(
                 }
             } else {
                 typeSelect.disabled = false;
+                fileInput.multiple = false;
                 if (dayGroup) {
                     dayGroup.style.display = "";
                     const dayInput = dayGroup.querySelector("input");
@@ -9365,6 +9818,7 @@ async function openCreateMenu(
                 uploadContainer.style.display = "block";
                 urlContainer.style.display = "none";
                 fileInput.accept = "image/*";
+                fileInput.multiple = currentMode === "announcement";
                 mediaTypeInput.value = "text";
                 if (placeholder) placeholder.style.display = "block";
             } else {
@@ -9372,8 +9826,10 @@ async function openCreateMenu(
                 urlContainer.style.display = "none";
                 if (type === "image") {
                     fileInput.accept = "image/*";
+                    fileInput.multiple = true;
                 } else if (type === "video") {
                     fileInput.accept = "video/*";
+                    fileInput.multiple = false;
                 }
             }
         });
@@ -9421,9 +9877,39 @@ async function openCreateMenu(
             }
         });
 
+        const updateMultiPreview = (urls = []) => {
+            const clean = (urls || []).filter(Boolean);
+            if (clean.length === 0) {
+                previewContainer.style.display = "none";
+                return;
+            }
+            const slides = clean
+                .map(
+                    (u) =>
+                        `<div class="xera-carousel-slide"><img src="${u}" alt="Media" loading="lazy" decoding="async"></div>`,
+                )
+                .join("");
+            const dots =
+                clean.length > 1
+                    ? `<div class="xera-carousel-dots">${clean
+                          .map(
+                              (_, i) =>
+                                  `<span class="xera-dot ${i === 0 ? "active" : ""}" data-index="${i}"></span>`,
+                          )
+                          .join("")}</div>`
+                    : "";
+            previewContainer.innerHTML = `
+                <div class="xera-carousel" data-carousel>
+                    <div class="xera-carousel-track">${slides}</div>
+                    ${dots}
+                </div>
+            `;
+        };
+
         initializeFileInput("create-media-file", {
             dropZone: dropZone,
             compress: true,
+            multiple: true,
             onUpload: (result) => {
                 loader.style.display = "none";
 
@@ -9446,33 +9932,88 @@ async function openCreateMenu(
                     alert("Erreur upload: " + result.error);
                 }
             },
+            onUploadBatch: (results) => {
+                loader.style.display = "none";
+                const successUrls = (results || [])
+                    .filter((r) => r && r.success && r.url)
+                    .map((r) => r.url);
+
+                if (successUrls.length === 0) {
+                    placeholder.style.display = "block";
+                    previewContainer.style.display = "none";
+                    mediaUrlsInput.value = "";
+                    return;
+                }
+
+                // Keep backward compatibility: first URL in create-media-url
+                document.getElementById("create-media-url").value = successUrls[0];
+                mediaUrlsInput.value = JSON.stringify(successUrls);
+                previewContainer.style.display = "block";
+                updateMultiPreview(successUrls);
+            },
         });
     }
 
     // Préremplir les champs existants si édition
     if (isEdit && existingContent) {
         const mediaUrl = existingContent.media_url || existingContent.mediaUrl;
+        const existingMediaUrls = Array.isArray(existingContent.mediaUrls)
+            ? existingContent.mediaUrls.filter(Boolean)
+            : mediaUrl
+              ? [mediaUrl]
+              : [];
         if (existingContent.type === "text") {
             uploadContainer.style.display = "block";
             urlContainer.style.display = "none";
             if (mediaUrl) {
-                previewContainer.style.display = "block";
                 placeholder.style.display = "none";
-                previewContainer.innerHTML = `<img src="${mediaUrl}" style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">`;
-            }
-        } else if (mediaUrl) {
-            previewContainer.style.display = "block";
-            placeholder.style.display = "none";
-
-                if (existingContent.type === "image") {
+                previewContainer.style.display = "block";
+                if (existingMediaUrls.length > 1) {
+                    mediaUrlsInput.value = JSON.stringify(existingMediaUrls);
+                    updateMultiPreview(existingMediaUrls);
+                    try {
+                        initXeraCarousels(previewContainer);
+                    } catch (e) {
+                        /* ignore */
+                    }
+                } else {
                     previewContainer.innerHTML = `<img src="${mediaUrl}" style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">`;
-            } else if (existingContent.type === "video") {
-                previewContainer.innerHTML = `<video src="${mediaUrl}" controls style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);"></video>`;
-            } else if (existingContent.type === "live") {
-                uploadContainer.style.display = "none";
-                urlContainer.style.display = "block";
-                liveInput.value = mediaUrl;
+                }
             }
+        } else if (existingContent.type === "image") {
+            uploadContainer.style.display = "block";
+            urlContainer.style.display = "none";
+            fileInput.accept = "image/*";
+            fileInput.multiple = true;
+            if (mediaUrl) {
+                placeholder.style.display = "none";
+                previewContainer.style.display = "block";
+                if (existingMediaUrls.length > 1) {
+                    mediaUrlsInput.value = JSON.stringify(existingMediaUrls);
+                    updateMultiPreview(existingMediaUrls);
+                    try {
+                        initXeraCarousels(previewContainer);
+                    } catch (e) {
+                        /* ignore */
+                    }
+                } else {
+                    previewContainer.innerHTML = `<img src="${mediaUrl}" style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">`;
+                }
+            }
+        } else if (existingContent.type === "video") {
+            uploadContainer.style.display = "block";
+            urlContainer.style.display = "none";
+            fileInput.accept = "video/*";
+            fileInput.multiple = false;
+            if (mediaUrl) {
+                placeholder.style.display = "none";
+                previewContainer.style.display = "block";
+                previewContainer.innerHTML = `<video src="${mediaUrl}" controls style="max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);"></video>`;
+            }
+        } else if (existingContent.type === "live") {
+            uploadContainer.style.display = "none";
+            urlContainer.style.display = "block";
+            liveInput.value = mediaUrl;
         }
     }
 
@@ -9482,7 +10023,22 @@ async function openCreateMenu(
         .addEventListener("submit", async (e) => {
             e.preventDefault();
 
+            const okOnline = await ensureOnlineOrNotify();
+            if (!okOnline) return;
+            const sessionCheck = await ensureFreshSupabaseSession();
+            if (!sessionCheck.ok) {
+                console.warn("Session refresh failed", sessionCheck.error);
+            }
+
             const mediaUrl = document.getElementById("create-media-url").value;
+            const mediaUrlsRaw = document.getElementById("create-media-urls")?.value || "";
+            let mediaUrls = [];
+            try {
+                const parsed = mediaUrlsRaw ? JSON.parse(mediaUrlsRaw) : [];
+                if (Array.isArray(parsed)) mediaUrls = parsed.filter(Boolean);
+            } catch (err) {
+                mediaUrls = [];
+            }
             const selectedType =
                 document.getElementById("create-media-type").value ||
                 document.getElementById("create-type").value;
@@ -9524,6 +10080,7 @@ async function openCreateMenu(
                         : document.getElementById("create-state").value,
                 type: currentMode === "announcement" ? "text" : selectedType,
                 mediaUrl: mediaUrl || null,
+                mediaUrls: mediaUrls,
                 arcId:
                     currentMode === "announcement"
                         ? null
@@ -9774,6 +10331,7 @@ window.handleSignOut = handleSignOut;
    ======================================== */
 
 document.addEventListener("DOMContentLoaded", function () {
+    setupPwaSwUpdateReload();
     initializeApp();
 });
 window.openCreateMenu = openCreateMenu;

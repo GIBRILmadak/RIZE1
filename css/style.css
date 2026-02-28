@@ -43,6 +43,72 @@ body {
     overflow-x: hidden;
 }
 
+/* --- XERA Carousel (multi-images) --- */
+.xera-carousel {
+    position: relative;
+    width: 100%;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.xera-carousel-track {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+
+.xera-carousel-track::-webkit-scrollbar {
+    display: none;
+}
+
+.xera-carousel-slide {
+    flex: 0 0 100%;
+    scroll-snap-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.xera-carousel-slide img {
+    width: 100%;
+    height: auto;
+    display: block;
+    object-fit: cover;
+}
+
+.xera-carousel--immersive .xera-carousel-slide img {
+    max-height: 70vh;
+    object-fit: contain;
+    background: rgba(0,0,0,0.15);
+}
+
+.xera-carousel-dots {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 10px;
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    pointer-events: auto;
+}
+
+.xera-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.35);
+    border: 1px solid rgba(255,255,255,0.35);
+    cursor: pointer;
+}
+
+.xera-dot.active {
+    background: rgba(255,255,255,0.95);
+    border-color: rgba(255,255,255,0.95);
+}
+
 /* --- UTILS --- */
 .loading-spinner {
     display: inline-block;

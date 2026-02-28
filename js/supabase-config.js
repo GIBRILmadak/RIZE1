@@ -269,22 +269,52 @@ function getContentWriteErrorMessage(error, contentData = {}) {
 
 // Créer un nouveau contenu
 async function createContent(contentData) {
-    const { data, error } = await supabase
-        .from('content')
-        .insert({
-            user_id: contentData.userId,
-            project_id: contentData.projectId,
-            arc_id: contentData.arcId,
-            day_number: contentData.dayNumber,
-            type: contentData.type,
-            state: contentData.state,
-            title: contentData.title,
-            description: contentData.description,
-            media_url: contentData.mediaUrl
-        })
-        .select()
-        .single();
-    
+    const basePayload = {
+        user_id: contentData.userId,
+        project_id: contentData.projectId,
+        arc_id: contentData.arcId,
+        day_number: contentData.dayNumber,
+        type: contentData.type,
+        state: contentData.state,
+        title: contentData.title,
+        description: contentData.description,
+        media_url: contentData.mediaUrl,
+    };
+
+    const mediaUrls = Array.isArray(contentData.mediaUrls)
+        ? contentData.mediaUrls.filter(Boolean)
+        : [];
+
+    const payloadWithMulti =
+        mediaUrls.length > 0
+            ? { ...basePayload, media_urls: mediaUrls }
+            : basePayload;
+
+    // Try writing multi-images first; if the column does not exist, fallback to media_url only.
+    const attempt = async (payload) =>
+        supabase.from('content').insert(payload).select().single();
+
+    let response = await attempt(payloadWithMulti);
+    let { data, error } = response;
+
+    if (error) {
+        const msg = String(error.message || '').toLowerCase();
+        const mentionsMissingColumn =
+            msg.includes('media_urls') &&
+            (msg.includes('column') || msg.includes('colonne')) &&
+            (msg.includes('does not exist') ||
+                msg.includes("n'existe pas") ||
+                msg.includes('could not find') ||
+                msg.includes('schema cache'));
+
+        if (mentionsMissingColumn) {
+            // Fallback for older schema
+            response = await attempt(basePayload);
+            data = response.data;
+            error = response.error;
+        }
+    }
+
     if (error) {
         console.error('Erreur création contenu:', error);
         return {
@@ -292,29 +322,60 @@ async function createContent(contentData) {
             error: getContentWriteErrorMessage(error, contentData),
         };
     }
-    
+
     return { success: true, data: data };
 }
 
 // Mettre à jour un contenu existant
 async function updateContent(contentId, contentData) {
-    const { data, error } = await supabase
-        .from('content')
-        .update({
-            project_id: contentData.projectId,
-            arc_id: contentData.arcId,
-            day_number: contentData.dayNumber,
-            type: contentData.type,
-            state: contentData.state,
-            title: contentData.title,
-            description: contentData.description,
-            media_url: contentData.mediaUrl
-        })
-        .eq('id', contentId)
-        .eq('user_id', contentData.userId) // Sécurité supplémentaire
-        .select()
-        .single();
-    
+    const basePayload = {
+        project_id: contentData.projectId,
+        arc_id: contentData.arcId,
+        day_number: contentData.dayNumber,
+        type: contentData.type,
+        state: contentData.state,
+        title: contentData.title,
+        description: contentData.description,
+        media_url: contentData.mediaUrl,
+    };
+
+    const mediaUrls = Array.isArray(contentData.mediaUrls)
+        ? contentData.mediaUrls.filter(Boolean)
+        : [];
+    const payloadWithMulti =
+        mediaUrls.length > 0
+            ? { ...basePayload, media_urls: mediaUrls }
+            : basePayload;
+
+    const attempt = async (payload) =>
+        supabase
+            .from('content')
+            .update(payload)
+            .eq('id', contentId)
+            .eq('user_id', contentData.userId)
+            .select()
+            .single();
+
+    let response = await attempt(payloadWithMulti);
+    let { data, error } = response;
+
+    if (error) {
+        const msg = String(error.message || '').toLowerCase();
+        const mentionsMissingColumn =
+            msg.includes('media_urls') &&
+            (msg.includes('column') || msg.includes('colonne')) &&
+            (msg.includes('does not exist') ||
+                msg.includes("n'existe pas") ||
+                msg.includes('could not find') ||
+                msg.includes('schema cache'));
+
+        if (mentionsMissingColumn) {
+            response = await attempt(basePayload);
+            data = response.data;
+            error = response.error;
+        }
+    }
+
     if (error) {
         console.error('Erreur mise à jour contenu:', error);
         return {
@@ -322,7 +383,7 @@ async function updateContent(contentId, contentData) {
             error: getContentWriteErrorMessage(error, contentData),
         };
     }
-    
+
     return { success: true, data: data };
 }
 

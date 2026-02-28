@@ -8,7 +8,102 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   // Become controlling SW for all clients
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      await self.clients.claim();
+      // Cleanup old caches
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((k) => k.startsWith('xera-shell-') && k !== CACHE_NAME)
+          .map((k) => caches.delete(k))
+      );
+    })()
+  );
+});
+
+const CACHE_NAME = 'xera-shell-v2';
+
+function isSameOrigin(request) {
+  try {
+    const url = new URL(request.url);
+    return url.origin === self.location.origin;
+  } catch (e) {
+    return false;
+  }
+}
+
+function isHtmlRequest(request) {
+  const accept = request.headers.get('accept') || '';
+  return accept.includes('text/html');
+}
+
+function isCacheableAsset(request) {
+  if (!isSameOrigin(request)) return false;
+  if (request.method !== 'GET') return false;
+  const url = new URL(request.url);
+  // Only cache local static assets/pages; do NOT cache API calls.
+  if (url.pathname.startsWith('/js/')) return true;
+  if (url.pathname.startsWith('/css/')) return true;
+  if (url.pathname.startsWith('/icons/')) return true;
+  if (url.pathname.endsWith('.html')) return true;
+  if (url.pathname === '/' || url.pathname === '/index.html') return true;
+  return false;
+}
+
+async function staleWhileRevalidate(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+
+  const fetchPromise = fetch(request)
+    .then((response) => {
+      if (response && response.ok) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => null);
+
+  return cached || (await fetchPromise) || Response.error();
+}
+
+async function networkFirst(request) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (e) {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+
+    // Fallback: serve app shell (prevents blank screen when offline)
+    const fallback =
+      (await cache.match('/index.html')) ||
+      (await cache.match('/')) ||
+      null;
+    return fallback || Response.error();
+  }
+}
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+
+  // Avoid interfering with non-GET / cross-origin (Supabase, CDNs, etc.)
+  if (request.method !== 'GET') return;
+  if (!isSameOrigin(request)) return;
+  if (!isCacheableAsset(request)) return;
+
+  // Documents: network-first (fresh navigation) with cache fallback
+  if (isHtmlRequest(request)) {
+    event.respondWith(networkFirst(request));
+    return;
+  }
+
+  // Static assets: stale-while-revalidate
+  event.respondWith(staleWhileRevalidate(request));
 });
 
 self.addEventListener('message', (event) => {

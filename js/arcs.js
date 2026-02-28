@@ -229,11 +229,8 @@ function renderArcCreationForm(arcToEdit = null) {
 }
 
 function initArcs() {
-    // Optionally pre-load if empty, but openCreateModal will ensure it's there
-    const createContainer = document.querySelector('#create-modal .create-container');
-    if (createContainer && !createContainer.innerHTML.trim()) {
-        renderArcCreationForm();
-    }
+    // Ne rien pré-rendre ici.
+    // Le formulaire est injecté uniquement quand l'utilisateur ouvre la modale.
 }
 
 // --- HOOKS ANIMATION ---
@@ -326,10 +323,37 @@ document.getElementById('create-modal')?.addEventListener('click', (e) => {
 
 // --- SUPABASE ACTIONS ---
 
+async function getArcAuthUser() {
+    if (window.currentUser && window.currentUser.id) return window.currentUser;
+    try {
+        const { data, error } = await supabase?.auth?.getUser?.();
+        if (!error && data?.user) {
+            window.currentUser = data.user;
+            window.currentUserId = data.user.id;
+            return data.user;
+        }
+    } catch (e) {
+        // ignore
+    }
+    return null;
+}
+
 async function handleCreateArc(e) {
     e.preventDefault();
-    
-    if (!currentUser) {
+
+    if (typeof ensureOnlineOrNotify === "function") {
+        const okOnline = await ensureOnlineOrNotify();
+        if (!okOnline) return;
+    }
+    if (typeof ensureFreshSupabaseSession === "function") {
+        const sessionCheck = await ensureFreshSupabaseSession();
+        if (!sessionCheck.ok) {
+            console.warn("Session refresh failed", sessionCheck.error);
+        }
+    }
+
+    const authUser = await getArcAuthUser();
+    if (!authUser) {
         alert("Vous devez être connecté pour créer un ARC.");
         return;
     }
@@ -367,7 +391,7 @@ async function handleCreateArc(e) {
     
     // Only set user_id and status on creation
     if (!arcId) {
-        arcData.user_id = currentUser.id;
+        arcData.user_id = authUser.id;
         arcData.status = 'in_progress';
     }
 
@@ -405,7 +429,7 @@ async function handleCreateArc(e) {
             createdArc &&
             createdArc.id &&
             pendingPayload &&
-            pendingPayload.userId === currentUser.id &&
+            pendingPayload.userId === authUser.id &&
             pendingIsFresh;
 
         if (pendingCreatePost && typeof window.openCreateMenu === 'function') {
@@ -417,7 +441,7 @@ async function handleCreateArc(e) {
             closeCreateModal();
             e.target.reset();
             setTimeout(() => {
-                window.openCreateMenu(currentUser.id, createdArc.id);
+                window.openCreateMenu(authUser.id, createdArc.id);
             }, 120);
             return;
         }
@@ -425,7 +449,7 @@ async function handleCreateArc(e) {
         if (!arcId && createdArc && createdArc.id && typeof notifyFollowersOfArcStart === "function") {
             notifyFollowersOfArcStart({
                 id: createdArc.id,
-                user_id: currentUser.id,
+                user_id: authUser.id,
                 title: arcData.title,
             }).catch((e) => console.warn("notifyFollowersOfArcStart error", e));
         }
@@ -436,7 +460,7 @@ async function handleCreateArc(e) {
         
         // Refresh profile if on profile page
         if (document.getElementById('profile').classList.contains('active')) {
-            loadUserArcs(currentUser.id);
+            loadUserArcs(authUser.id);
         }
         
         // If we were viewing details of this arc, reload them
@@ -446,7 +470,9 @@ async function handleCreateArc(e) {
 
     } catch (error) {
         console.error('Error saving ARC:', error);
-        alert("Erreur lors de l'enregistrement de l'ARC.");
+        const msg = error?.message || String(error || "");
+        const code = error?.code ? ` (${error.code})` : "";
+        alert(`Erreur lors de l'enregistrement de l'ARC${code}: ${msg}`);
     } finally {
         btn.disabled = false;
         btn.textContent = originalText;

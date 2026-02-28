@@ -42,9 +42,20 @@ async function uploadFile(file, folder = "content", onProgress) {
             throw new Error("Fichier trop volumineux.");
         }
 
-        // Vérifier que l'utilisateur est connecté
+        // Vérifier que l'utilisateur est connecté (PWA: currentUser peut être non hydraté)
         if (!window.currentUser) {
-            throw new Error("Utilisateur non connecté");
+            try {
+                const { data, error } = await supabase?.auth?.getUser?.();
+                if (!error && data?.user) {
+                    window.currentUser = data.user;
+                    window.currentUserId = data.user.id;
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+        if (!window.currentUser) {
+            throw new Error("Utilisateur non connecté. Reconnectez-vous.");
         }
 
         // Générer un nom de fichier unique
@@ -259,7 +270,11 @@ function initializeFileInput(inputId, options = {}) {
     const dropZone = options.dropZone || input.parentElement;
     const preview = options.preview;
     const onUpload = options.onUpload;
-    const allowMultiple = options.multiple || false;
+    const onUploadBatch = options.onUploadBatch;
+    const resolveMultiple = () =>
+        typeof options.multiple === "function"
+            ? !!options.multiple()
+            : !!options.multiple;
     const compress = options.compress || false;
     const validate = options.validate;
 
@@ -268,9 +283,19 @@ function initializeFileInput(inputId, options = {}) {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
 
-        await handleFileSelection(files, preview, onUpload, compress, {
+        const allowMultiple = resolveMultiple();
+        const chosen = allowMultiple ? files : files.slice(0, 1);
+        const uploaded = await handleFileSelection(chosen, preview, onUpload, compress, {
             validate,
         });
+
+        if (typeof onUploadBatch === "function") {
+            try {
+                onUploadBatch(uploaded);
+            } catch (err) {
+                console.error("Erreur onUploadBatch:", err);
+            }
+        }
     });
 
     // Gérer le drag & drop
@@ -291,9 +316,19 @@ function initializeFileInput(inputId, options = {}) {
             const files = Array.from(e.dataTransfer.files);
             if (files.length === 0) return;
 
-            await handleFileSelection(files, preview, onUpload, compress, {
+            const allowMultiple = resolveMultiple();
+            const chosen = allowMultiple ? files : files.slice(0, 1);
+            const uploaded = await handleFileSelection(chosen, preview, onUpload, compress, {
                 validate,
             });
+
+            if (typeof onUploadBatch === "function") {
+                try {
+                    onUploadBatch(uploaded);
+                } catch (err) {
+                    console.error("Erreur onUploadBatch:", err);
+                }
+            }
         });
     }
 }
