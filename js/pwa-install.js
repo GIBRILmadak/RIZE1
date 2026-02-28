@@ -8,6 +8,7 @@
     let deferredPrompt = null;
     let bannerEl = null;
     let iosHintEl = null;
+    let mobileHintEl = null;
 
     const isIos = () => /iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase());
     const isStandalone = () =>
@@ -95,6 +96,59 @@
         localStorage.setItem(IOS_HINT_KEY, "1");
     }
 
+    function showMobileHint() {
+        if (mobileHintEl) {
+            mobileHintEl.classList.add("show");
+            return;
+        }
+
+        injectStyles();
+        mobileHintEl = document.createElement("div");
+        mobileHintEl.id = "pwa-ios-hint";
+
+        const ua = navigator.userAgent.toLowerCase();
+        const isAndroid = ua.includes("android");
+        const title = isAndroid
+            ? "Installer XERA sur Android"
+            : "Installer XERA sur mobile";
+        const steps = isAndroid
+            ? `
+                <ol>
+                    <li>Ouvrez le menu du navigateur (<strong>⋮</strong> ou <strong>•••</strong>).</li>
+                    <li>Appuyez sur <strong>"Installer l'application"</strong> ou <strong>"Ajouter à l'écran d'accueil"</strong>.</li>
+                    <li>Validez pour épingler XERA parmi vos applications.</li>
+                </ol>
+            `
+            : `
+                <ol>
+                    <li>Ouvrez le menu du navigateur.</li>
+                    <li>Choisissez <strong>"Ajouter à l'écran d'accueil"</strong> (ou équivalent).</li>
+                    <li>Validez l'installation.</li>
+                </ol>
+            `;
+
+        mobileHintEl.innerHTML = `
+            <div class="pwa-card">
+                <h4>${title}</h4>
+                ${steps}
+                <button type="button" data-action="close-hint">Compris</button>
+            </div>
+        `;
+
+        mobileHintEl.addEventListener("click", (e) => {
+            if (
+                e.target === mobileHintEl ||
+                e.target.closest('[data-action="close-hint"]')
+            ) {
+                mobileHintEl.classList.remove("show");
+                setTimeout(() => mobileHintEl?.remove(), 180);
+            }
+        });
+
+        document.body.appendChild(mobileHintEl);
+        requestAnimationFrame(() => mobileHintEl.classList.add("show"));
+    }
+
     function buildBanner(options = {}) {
         if (!shouldShowBanner()) return;
         injectStyles();
@@ -132,7 +186,7 @@
             }
 
             if (!deferredPrompt) {
-                ToastManager?.info?.("Installer XERA", "Utilisez le menu du navigateur pour l'ajouter.");
+                showMobileHint();
                 return;
             }
 

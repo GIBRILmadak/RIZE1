@@ -28,7 +28,7 @@ self.addEventListener('push', (event) => {
 
   const title = payload.title || 'XERA';
   const body = payload.body || '';
-  const icon = payload.icon || '/icons/logo.png';
+  const icon = payload.icon || '/icons/logo-192x192.png';
   const badge = payload.badge || icon;
   const link = payload.link || '/profile.html';
 

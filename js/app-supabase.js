@@ -15,7 +15,7 @@ window.hasLoadedUsers = false;
 window.userLoadError = null;
 window.arcCollaboratorsCache = new Map();
 window.arcCollaboratorsPending = new Set();
-window.pendingCreatePostAfterArc = null;
+window.pendingCreatePostAfterArc = null;q
 let firstPostOnboardingHandled = false;
 const CONTENT_PREFETCH_BATCH_SIZE = 10;
 const CONTENT_FETCH_BATCH_SIZE = 50;
@@ -7248,13 +7248,24 @@ async function renderProfileTimeline(userId) {
 
     const timelinesHtml = timelineCollapsedHtml;
 
+    const imageVersion = encodeURIComponent(
+        user.updated_at || user.updatedAt || Date.now(),
+    );
+    const withCacheBust = (url) => {
+        if (!url) return url;
+        if (typeof url !== "string") return url;
+        if (url.startsWith("data:")) return url;
+        const joiner = url.includes("?") ? "&" : "?";
+        return `${url}${joiner}v=${imageVersion}`;
+    };
+
     const safeBanner =
         user.banner &&
         (user.banner.startsWith("http") || user.banner.startsWith("data:"))
             ? user.banner
             : null;
     const bannerHtml = safeBanner
-        ? `<img src="${safeBanner}" class="profile-banner" alt="Bannière de ${user.name}" onerror="this.style.display='none'">`
+        ? `<img src="${withCacheBust(safeBanner)}" class="profile-banner" alt="Bannière de ${user.name}" onerror="this.style.display='none'">`
         : "";
 
     const projects = await projectsPromise;
@@ -7331,7 +7342,7 @@ async function renderProfileTimeline(userId) {
         ${bannerHtml}
         <div class="profile-hero">
             <div class="profile-avatar-wrapper">
-                <img src="${user.avatar && (user.avatar.startsWith("http") || user.avatar.startsWith("data:")) ? user.avatar : "https://placehold.co/150"}" class="profile-avatar-img" alt="Avatar de ${user.name}" onclick="navigateToUserProfile('${userId}')" style="cursor: pointer;">
+                <img src="${user.avatar && (user.avatar.startsWith("http") || user.avatar.startsWith("data:")) ? withCacheBust(user.avatar) : "https://placehold.co/150"}" class="profile-avatar-img" alt="Avatar de ${user.name}" onclick="navigateToUserProfile('${userId}')" style="cursor: pointer;">
             </div>
             <h2>${renderUsernameForProfile(user.name, user.id)}</h2>
             <p style="color: var(--text-secondary);"><strong>${user.title}</strong></p>
