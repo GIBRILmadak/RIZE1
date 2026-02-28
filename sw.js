@@ -22,7 +22,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-const CACHE_NAME = 'xera-shell-v2';
+const CACHE_NAME = 'xera-shell-v3';
 
 function isSameOrigin(request) {
   try {

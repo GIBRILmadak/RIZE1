@@ -8670,11 +8670,31 @@ async function openSettings(userId) {
         });
     });
 
+    let pendingProfileMediaUploads = 0;
+    const updateSaveButtonUploadState = () => {
+        const btn = document.querySelector("#settings-form .btn-save");
+        if (!btn) return;
+        if (pendingProfileMediaUploads > 0) {
+            btn.disabled = true;
+            btn.textContent = "Upload image...";
+        } else if (btn.textContent === "Upload image...") {
+            btn.disabled = false;
+            btn.textContent = "Enregistrer";
+        }
+    };
+
     // Handle form submission
     document
         .getElementById("settings-form")
         .addEventListener("submit", async (e) => {
             e.preventDefault();
+
+            if (pendingProfileMediaUploads > 0) {
+                alert(
+                    "Un upload d'image est encore en cours. Attendez la fin puis réessayez.",
+                );
+                return;
+            }
 
             const btnSave = e.target.querySelector(".btn-save");
             const originalText = btnSave.textContent;
@@ -8809,6 +8829,17 @@ async function openSettings(userId) {
         initializeFileInput("setting-avatar-file", {
             preview: "preview-avatar",
             compress: true,
+            onBeforeUpload: () => {
+                pendingProfileMediaUploads += 1;
+                updateSaveButtonUploadState();
+            },
+            onAfterUpload: () => {
+                pendingProfileMediaUploads = Math.max(
+                    0,
+                    pendingProfileMediaUploads - 1,
+                );
+                updateSaveButtonUploadState();
+            },
             validate: (file) => {
                 const isGif =
                     typeof isGifFile === "function"
@@ -8838,6 +8869,17 @@ async function openSettings(userId) {
         initializeFileInput("setting-banner-file", {
             preview: "preview-banner",
             compress: true,
+            onBeforeUpload: () => {
+                pendingProfileMediaUploads += 1;
+                updateSaveButtonUploadState();
+            },
+            onAfterUpload: () => {
+                pendingProfileMediaUploads = Math.max(
+                    0,
+                    pendingProfileMediaUploads - 1,
+                );
+                updateSaveButtonUploadState();
+            },
             validate: (file) => {
                 const isGif =
                     typeof isGifFile === "function"

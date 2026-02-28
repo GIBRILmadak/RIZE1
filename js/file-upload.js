@@ -292,6 +292,8 @@ function initializeFileInput(inputId, options = {}) {
     const preview = options.preview;
     const onUpload = options.onUpload;
     const onUploadBatch = options.onUploadBatch;
+    const onBeforeUpload = options.onBeforeUpload;
+    const onAfterUpload = options.onAfterUpload;
     const resolveMultiple = () =>
         typeof options.multiple === "function"
             ? !!options.multiple()
@@ -308,7 +310,10 @@ function initializeFileInput(inputId, options = {}) {
         const chosen = allowMultiple ? files : files.slice(0, 1);
         const uploaded = await handleFileSelection(chosen, preview, onUpload, compress, {
             validate,
+            onBeforeUpload,
+            onAfterUpload,
         });
+        input.value = "";
 
         if (typeof onUploadBatch === "function") {
             try {
@@ -341,6 +346,8 @@ function initializeFileInput(inputId, options = {}) {
             const chosen = allowMultiple ? files : files.slice(0, 1);
             const uploaded = await handleFileSelection(chosen, preview, onUpload, compress, {
                 validate,
+                onBeforeUpload,
+                onAfterUpload,
             });
 
             if (typeof onUploadBatch === "function") {
@@ -364,6 +371,8 @@ async function handleFileSelection(
 ) {
     const uploadedFiles = [];
     const validate = options.validate;
+    const onBeforeUpload = options.onBeforeUpload;
+    const onAfterUpload = options.onAfterUpload;
 
     for (const file of files) {
         if (typeof validate === "function") {
@@ -411,7 +420,25 @@ async function handleFileSelection(
         }
 
         // Uploader le fichier
-        const result = await uploadFile(fileToUpload);
+        if (typeof onBeforeUpload === "function") {
+            try {
+                onBeforeUpload(fileToUpload);
+            } catch (e) {
+                console.error("Erreur onBeforeUpload:", e);
+            }
+        }
+        let result;
+        try {
+            result = await uploadFile(fileToUpload);
+        } finally {
+            if (typeof onAfterUpload === "function") {
+                try {
+                    onAfterUpload();
+                } catch (e) {
+                    console.error("Erreur onAfterUpload:", e);
+                }
+            }
+        }
         uploadedFiles.push(result);
 
         // Callback après upload
