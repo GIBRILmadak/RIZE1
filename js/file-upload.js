@@ -7,6 +7,8 @@ const ALLOWED_IMAGE_TYPES = [
     "image/png",
     "image/gif",
     "image/webp",
+    "image/heic",
+    "image/heif",
 ];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 const MAX_FILE_SIZE = Number.POSITIVE_INFINITY; // no client-side limit
@@ -24,17 +26,32 @@ function isGifFile(file) {
     return false;
 }
 
+function isAllowedImageFile(file) {
+    if (!file) return false;
+    if (ALLOWED_IMAGE_TYPES.includes(file.type)) return true;
+    const name = (file.name || "").toLowerCase();
+    return (
+        name.endsWith(".jpg") ||
+        name.endsWith(".jpeg") ||
+        name.endsWith(".png") ||
+        name.endsWith(".gif") ||
+        name.endsWith(".webp") ||
+        name.endsWith(".heic") ||
+        name.endsWith(".heif")
+    );
+}
+
 async function uploadFile(file, folder = "content", onProgress) {
     try {
         // Validation du type de fichier
         const isGif = isGifFile(file);
-        const isImage = ALLOWED_IMAGE_TYPES.includes(file.type) || isGif;
+        const isImage = isAllowedImageFile(file) || isGif;
         const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
 
         if (!isImage && !isVideo) {
-            throw new Error(
-                "Type de fichier non supporté. Utilisez JPG, PNG, GIF, WebP, MP4 ou WebM.",
-            );
+                throw new Error(
+                    "Type de fichier non supporté. Utilisez JPG, PNG, GIF, WebP, HEIC, HEIF, MP4 ou WebM.",
+                );
         }
 
         // Validation de la taille
@@ -242,6 +259,10 @@ async function compressImage(file, maxWidth = 1920, quality = 0.8) {
 
                 canvas.toBlob(
                     (blob) => {
+                        if (!blob) {
+                            reject(new Error("Impossible de compresser l'image."));
+                            return;
+                        }
                         const compressedFile = new File([blob], file.name, {
                             type: "image/jpeg",
                             lastModified: Date.now(),
@@ -362,7 +383,7 @@ async function handleFileSelection(
         }
 
         // Afficher l'aperçu si demandé
-        if (preview && ALLOWED_IMAGE_TYPES.includes(file.type)) {
+        if (preview && isAllowedImageFile(file)) {
             createImagePreview(file, (dataUrl) => {
                 if (typeof preview === "function") {
                     preview(dataUrl);
@@ -379,8 +400,8 @@ async function handleFileSelection(
         let fileToUpload = file;
         const shouldCompress =
             compress &&
-            ALLOWED_IMAGE_TYPES.includes(file.type) &&
-            file.type !== "image/gif";
+            isAllowedImageFile(file) &&
+            !isGifFile(file);
         if (shouldCompress) {
             try {
                 fileToUpload = await compressImage(file);
@@ -435,7 +456,7 @@ function validateFile(file) {
     const errors = [];
 
     // Vérifier le type
-    const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+    const isImage = isAllowedImageFile(file);
     const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
 
     if (!isImage && !isVideo) {

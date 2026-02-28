@@ -8810,7 +8810,14 @@ async function openSettings(userId) {
             preview: "preview-avatar",
             compress: true,
             validate: (file) => {
-                if (file.type !== "image/gif") return { valid: true };
+                const isGif =
+                    typeof isGifFile === "function"
+                        ? isGifFile(file)
+                        : file?.type === "image/gif" ||
+                          String(file?.name || "")
+                              .toLowerCase()
+                              .endsWith(".gif");
+                if (!isGif) return { valid: true };
                 if (isCurrentUserVerified()) return { valid: true };
                 return {
                     valid: false,
@@ -8832,7 +8839,14 @@ async function openSettings(userId) {
             preview: "preview-banner",
             compress: true,
             validate: (file) => {
-                if (file.type !== "image/gif") return { valid: true };
+                const isGif =
+                    typeof isGifFile === "function"
+                        ? isGifFile(file)
+                        : file?.type === "image/gif" ||
+                          String(file?.name || "")
+                              .toLowerCase()
+                              .endsWith(".gif");
+                if (!isGif) return { valid: true };
                 if (isCurrentUserVerified()) return { valid: true };
                 return {
                     valid: false,
