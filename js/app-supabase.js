@@ -8711,6 +8711,75 @@ async function openSettings(userId) {
                 }
             });
 
+            const isGifCandidate = (file) =>
+                typeof isGifFile === "function"
+                    ? isGifFile(file)
+                    : file?.type === "image/gif" ||
+                      String(file?.name || "")
+                          .toLowerCase()
+                          .endsWith(".gif");
+
+            const uploadPendingProfileImage = async (
+                inputId,
+                hiddenId,
+                label,
+            ) => {
+                const input = document.getElementById(inputId);
+                const file = input?.files?.[0];
+                if (!file) return;
+
+                const isGif = isGifCandidate(file);
+                if (isGif && !isCurrentUserVerified()) {
+                    throw new Error(
+                        "Vous devez être vérifié pour utiliser un GIF en profil.",
+                    );
+                }
+
+                let fileToUpload = file;
+                if (!isGif && typeof compressImage === "function") {
+                    try {
+                        fileToUpload = await compressImage(file);
+                    } catch (err) {
+                        console.warn(`Compression ${label} échouée:`, err);
+                    }
+                }
+
+                btnSave.textContent = `Upload ${label}...`;
+                const uploadResult = await uploadFile(fileToUpload, "profile");
+                if (!uploadResult?.success || !uploadResult?.url) {
+                    throw new Error(
+                        uploadResult?.error ||
+                            `Échec upload ${label.toLowerCase()}.`,
+                    );
+                }
+
+                const hidden = document.getElementById(hiddenId);
+                if (hidden) hidden.value = uploadResult.url;
+                if (input) input.value = "";
+            };
+
+            try {
+                // Fallback safety: si un fichier est encore présent au submit,
+                // on l'upload avant la sauvegarde profil.
+                await uploadPendingProfileImage(
+                    "setting-avatar-file",
+                    "setting-avatar",
+                    "avatar",
+                );
+                await uploadPendingProfileImage(
+                    "setting-banner-file",
+                    "setting-banner",
+                    "bannière",
+                );
+            } catch (uploadErr) {
+                alert("Erreur upload: " + (uploadErr?.message || uploadErr));
+                btnSave.disabled = false;
+                btnSave.textContent = originalText;
+                return;
+            }
+
+            btnSave.textContent = "Enregistrement...";
+
             const profileData = {
                 name: document.getElementById("setting-name").value,
                 title: document.getElementById("setting-title").value,
