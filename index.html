@@ -4,10 +4,14 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>XERA | Tracez votre progression</title>
+        <link rel="manifest" href="/manifest.json" />
         <link
             href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800&display=swap"
             rel="stylesheet"
         />
+        <link rel="apple-touch-icon" href="icons/logo.png" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black" />
         <script>
             // Set early lang to avoid flash while i18n loads
             (() => {
@@ -318,6 +322,7 @@
         <!-- Améliorations UX -->
         <script src="js/ux-enhancements.js"></script>
         <script src="js/app-enhancements.js"></script>
+        <script src="js/pwa-install.js" defer></script>
         <!-- Modules de fonctionnalités -->
         <script src="js/search.js"></script>
         <script src="js/notifications.js"></script>
